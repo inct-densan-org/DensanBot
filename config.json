@@ -1,0 +1,19 @@
+{
+    "advisor_name": "（顧問名未設定）",
+    "student_rep_name": "（代表学生名未設定）",
+    "template_file_name": "[電子計算機部]R0年xx月_活動計画書・活動報告書・活動延長願（複合書式）.xlsx",
+    "editable_groups": [
+        "AI",
+        "CG･DTM",
+        "Web",
+        "Game",
+        "Network",
+        "Procon"
+    ],
+    "editable_locations": [
+        "旧CAD室",
+        "コンピューター室",
+        "FPラボ",
+        "村上先生教員室前"
+    ]
+}
