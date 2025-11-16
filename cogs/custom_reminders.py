@@ -5,72 +5,44 @@ import os
 import datetime
 import uuid
 from dateutil.relativedelta import relativedelta
+from typing import List
 
 from .ui_components import PaginationView
 from .utils import load_json, save_json, parse_date, REMINDERS_FILE, JST
 
-REPEAT_OPTIONS = [
-    discord.SelectOption(label="なし", value="none", description="この日1回のみ通知します。"),
-    discord.SelectOption(label="毎週", value="weekly", description="毎週同じ曜日に通知します。"),
-    discord.SelectOption(label="毎月", value="monthly", description="毎月同じ日に通知します。"),
-    discord.SelectOption(label="毎年", value="yearly", description="毎年同じ日付に通知します。"),
-]
+# --- オートコンプリート用の関数 ---
+async def reminder_autocomplete(interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+    reminders = load_json(REMINDERS_FILE)
+    return [
+        app_commands.Choice(name=f"{r.get('date')} - {r.get('content', '')[:50]}", value=r.get("id"))
+        for r in reminders if current.lower() in r.get('content', '').lower() or current in r.get('date', '')
+    ][:25]
 
-class ReminderModal(discord.ui.Modal, title="リマインダーの登録・編集"):
-    def __init__(self, cog, reminder: dict = None):
-        super().__init__()
-        self.cog = cog
-        self.reminder = reminder
-        self.task_date.default = reminder.get("date") if reminder else None
-        self.target.default = reminder.get("target") if reminder else None
-        self.content.default = reminder.get("content") if reminder else None
-        
-        # --- デフォルト値設定のロジックを修正 ---
-        current_repeat = reminder.get("repeat", "none") if reminder else "none"
-        
-        # 動的にデフォルト値を設定したオプションリストを作成
-        options_with_default = []
-        for option in REPEAT_OPTIONS:
-            # 元のオプションをコピーして、default値を設定
-            new_option = discord.SelectOption(
-                label=option.label,
-                value=option.value,
-                description=option.description,
-                default=(option.value == current_repeat) # ここが重要
-            )
-            options_with_default.append(new_option)
-
-        self.repeat_select = discord.ui.Select(
-            options=options_with_default, 
-            placeholder="繰り返し設定を選択"
-        )
-        self.add_item(self.repeat_select)
-
-    task_date = discord.ui.TextInput(label="日付 (YYYY-MM-DD or YYYYMMDD)", placeholder="例: 2025-04-01")
-    target = discord.ui.TextInput(label="対象者", placeholder="例: 部長, 会計担当")
-    content = discord.ui.TextInput(label="内容", style=discord.TextStyle.paragraph, placeholder="例: ドメイン更新")
-    
-    async def on_submit(self, interaction: discord.Interaction):
-        await self.cog.handle_reminder_submission(interaction, self)
 
 class ReminderActionView(PaginationView):
-    def __init__(self, embeds: list[discord.Embed], interaction: discord.Interaction, reminders: list[dict], cog):
+    def __init__(self, embeds: list[discord.Embed], interaction: discord.Interaction, reminders: list[dict]):
         super().__init__(embeds, interaction)
         self.reminders = reminders
-        self.cog = cog
 
     @discord.ui.button(label="編集", style=discord.ButtonStyle.secondary, row=1)
     async def edit_reminder(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(ReminderModal(cog=self.cog, reminder=self.reminders[self.current_page]))
+        reminder = self.reminders[self.current_page]
+        # /remind edit コマンドをチャット欄に挿入する
+        command_str = f"/remind edit id:{reminder['id']} "
+        await interaction.response.send_message(
+            f"以下のコマンドを編集して実行してください:\n`{command_str}`",
+            ephemeral=True
+        )
 
     @discord.ui.button(label="削除", style=discord.ButtonStyle.danger, row=1)
     async def delete_reminder(self, interaction: discord.Interaction, button: discord.ui.Button):
-        reminder_to_delete = self.reminders[self.current_page]
-        rem_id = reminder_to_delete.get("id")
+        reminder = self.reminders[self.current_page]
+        rem_id = reminder.get("id")
         updated_reminders = [r for r in load_json(REMINDERS_FILE) if r.get("id") != rem_id]
         save_json(REMINDERS_FILE, updated_reminders)
-        await interaction.response.send_message(f"リマインダー「{reminder_to_delete['content'][:20]}...」を削除しました。", ephemeral=True)
+        await interaction.response.send_message(f"リマインダー「{reminder['content'][:20]}...」を削除しました。", ephemeral=True)
         await self.interaction.message.delete()
+
 
 class CustomRemindersCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -82,8 +54,63 @@ class CustomRemindersCog(commands.Cog):
     remind_group = app_commands.Group(name="remind", description="カスタムリマインダー機能")
 
     @remind_group.command(name="add", description="新しいリマインダーを登録します。")
-    async def add_reminder(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(ReminderModal(cog=self))
+    @app_commands.describe(
+        date="日付 (YYYY-MM-DD or YYYYMMDD)",
+        target="対象者 (例: 部長, 会計担当)",
+        content="内容 (例: ドメイン更新)",
+        repeat="繰り返しの設定"
+    )
+    @app_commands.choices(repeat=[
+        app_commands.Choice(name="なし", value="none"),
+        app_commands.Choice(name="毎週", value="weekly"),
+        app_commands.Choice(name="毎月", value="monthly"),
+        app_commands.Choice(name="毎年", value="yearly"),
+    ])
+    async def add_reminder(self, interaction: discord.Interaction, date: str, target: str, content: str, repeat: app_commands.Choice[str]):
+        date_str = parse_date(date)
+        if not date_str:
+            await interaction.response.send_message("エラー: 日付の形式が正しくありません。", ephemeral=True)
+            return
+        
+        reminders = load_json(REMINDERS_FILE)
+        new_reminder = {
+            "id": str(uuid.uuid4()), "date": date_str, "target": target, "content": content,
+            "repeat": repeat.value, "creator_name": interaction.user.display_name,
+            "creator_avatar": str(interaction.user.display_avatar.url),
+            "created_at": datetime.datetime.now(JST).isoformat()
+        }
+        reminders.append(new_reminder)
+        save_json(REMINDERS_FILE, reminders)
+        await interaction.response.send_message("✅ 新しいリマインダーを登録しました。", ephemeral=True)
+
+    @remind_group.command(name="edit", description="既存のリマインダーを編集します。")
+    @app_commands.autocomplete(id=reminder_autocomplete)
+    @app_commands.describe(
+        id="編集したいリマインダーのID",
+        date="新しい日付 (YYYY-MM-DD or YYYYMMDD)",
+        target="新しい対象者",
+        content="新しい内容",
+        repeat="新しい繰り返しの設定"
+    )
+    @app_commands.choices(repeat=[
+        app_commands.Choice(name="なし", value="none"), app_commands.Choice(name="毎週", value="weekly"),
+        app_commands.Choice(name="毎月", value="monthly"), app_commands.Choice(name="毎年", value="yearly"),
+    ])
+    async def edit_reminder(self, interaction: discord.Interaction, id: str, date: str = None, target: str = None, content: str = None, repeat: app_commands.Choice[str] = None):
+        reminders = load_json(REMINDERS_FILE)
+        target_reminder = next((r for r in reminders if r.get("id") == id), None)
+        if not target_reminder:
+            await interaction.response.send_message("エラー: 指定されたIDのリマインダーが見つかりません。", ephemeral=True)
+            return
+
+        if date and (parsed_date := parse_date(date)):
+            target_reminder["date"] = parsed_date
+        if target: target_reminder["target"] = target
+        if content: target_reminder["content"] = content
+        if repeat: target_reminder["repeat"] = repeat.value
+        
+        save_json(REMINDERS_FILE, reminders)
+        await interaction.response.send_message("✅ リマインダーを更新しました。", ephemeral=True)
 
     @remind_group.command(name="list", description="登録済みのリマインダーを一覧表示します。")
     async def list_reminders(self, interaction: discord.Interaction):
@@ -93,33 +120,8 @@ class CustomRemindersCog(commands.Cog):
             await interaction.followup.send("登録されているリマインダーはありません。", ephemeral=True)
             return
         embeds = [self.create_reminder_embed(r) for r in reminders]
-        view = ReminderActionView(embeds, interaction, reminders, self)
+        view = ReminderActionView(embeds, interaction, reminders)
         await interaction.followup.send(embed=embeds[0], view=view, ephemeral=True)
-
-    async def handle_reminder_submission(self, interaction: discord.Interaction, modal: ReminderModal):
-        date_str = parse_date(modal.task_date.value)
-        if not date_str:
-            await interaction.response.send_message("エラー: 日付の形式が正しくありません。(例: 2025-09-20 or 20250920)", ephemeral=True)
-            return
-        
-        reminders = load_json(REMINDERS_FILE)
-        repeat_value = modal.repeat_select.values[0] if modal.repeat_select.values else "none"
-        if modal.reminder:
-            for r in reminders:
-                if r.get("id") == modal.reminder["id"]:
-                    r.update({"date": date_str, "target": modal.target.value, "content": modal.content.value, "repeat": repeat_value})
-                    break
-            await interaction.response.send_message("✅ リマインダーを更新しました。", ephemeral=True)
-        else:
-            new_reminder = {
-                "id": str(uuid.uuid4()), "date": date_str, "target": modal.target.value,
-                "content": modal.content.value, "repeat": repeat_value,
-                "creator_name": interaction.user.display_name, "creator_avatar": str(interaction.user.display_avatar.url),
-                "created_at": datetime.datetime.now(JST).isoformat()
-            }
-            reminders.append(new_reminder)
-            await interaction.response.send_message("✅ 新しいリマインダーを登録しました。", ephemeral=True)
-        save_json(REMINDERS_FILE, reminders)
 
     def create_reminder_embed(self, reminder: dict) -> discord.Embed:
         embed = discord.Embed(title=f"{reminder['content']}", color=discord.Color.orange())
