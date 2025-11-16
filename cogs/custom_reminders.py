@@ -10,8 +10,10 @@ from .ui_components import PaginationView
 from .utils import load_json, save_json, parse_date, REMINDERS_FILE, JST
 
 REPEAT_OPTIONS = [
-    discord.SelectOption(label="なし", value="none"), discord.SelectOption(label="毎週", value="weekly"),
-    discord.SelectOption(label="毎月", value="monthly"), discord.SelectOption(label="毎年", value="yearly"),
+    discord.SelectOption(label="なし", value="none", description="この日1回のみ通知します。"),
+    discord.SelectOption(label="毎週", value="weekly", description="毎週同じ曜日に通知します。"),
+    discord.SelectOption(label="毎月", value="monthly", description="毎月同じ日に通知します。"),
+    discord.SelectOption(label="毎年", value="yearly", description="毎年同じ日付に通知します。"),
 ]
 
 class ReminderModal(discord.ui.Modal, title="リマインダーの登録・編集"):
@@ -22,8 +24,26 @@ class ReminderModal(discord.ui.Modal, title="リマインダーの登録・編�
         self.task_date.default = reminder.get("date") if reminder else None
         self.target.default = reminder.get("target") if reminder else None
         self.content.default = reminder.get("content") if reminder else None
+        
+        # --- デフォルト値設定のロジックを修正 ---
         current_repeat = reminder.get("repeat", "none") if reminder else "none"
-        self.repeat_select = discord.ui.Select(options=REPEAT_OPTIONS, placeholder="繰り返し設定を選択", default=[discord.SelectOption(label=current_repeat, value=current_repeat)])
+        
+        # 動的にデフォルト値を設定したオプションリストを作成
+        options_with_default = []
+        for option in REPEAT_OPTIONS:
+            # 元のオプションをコピーして、default値を設定
+            new_option = discord.SelectOption(
+                label=option.label,
+                value=option.value,
+                description=option.description,
+                default=(option.value == current_repeat) # ここが重要
+            )
+            options_with_default.append(new_option)
+
+        self.repeat_select = discord.ui.Select(
+            options=options_with_default, 
+            placeholder="繰り返し設定を選択"
+        )
         self.add_item(self.repeat_select)
 
     task_date = discord.ui.TextInput(label="日付 (YYYY-MM-DD or YYYYMMDD)", placeholder="例: 2025-04-01")
