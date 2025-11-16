@@ -4,16 +4,27 @@ from discord.ext import commands, tasks
 import datetime
 import os
 import uuid
+from typing import List
 
 from .ui_components import PaginationView, ReminderView
 from .utils import (
     load_json, save_json, JST, WEEKDAYS, parse_time, parse_date,
-    REGULAR_PLANS_FILE, OFF_PERIODS_FILE, PLAN_LOG_FILE_NAME
+    REGULAR_PLANS_FILE, OFF_PERIODS_FILE, PLAN_LOG_FILE_NAME,
+    get_group_options, get_location_options # 選択肢取得関数をインポート
 )
 
 WEEKDAY_CHOICES = [app_commands.Choice(name=day, value=i) for i, day in enumerate(WEEKDAYS)]
 PLAN_NOTICE_CHANNEL_ID = int(os.getenv("PLAN_NOTICE_CHANNEL_ID", 0))
 REMIND_BEFORE_MINUTES = 15
+
+# --- オートコンプリート用の関数 ---
+async def group_autocomplete(interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+    groups = get_group_options()
+    return [app_commands.Choice(name=group, value=group) for group in groups if current.lower() in group.lower()]
+
+async def location_autocomplete(interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+    locations = get_location_options()
+    return [app_commands.Choice(name=loc, value=loc) for loc in locations if current.lower() in loc.lower()]
 
 def get_channel_id_for_group(group_name: str) -> int:
     env_var_name = f"{group_name.upper().replace('･', '_')}_CHANNEL_ID"
@@ -41,8 +52,6 @@ class ScheduleManagerCog(commands.Cog):
     async def send_reminder(self, interaction: discord.Interaction):
         embed = discord.Embed(title="💡 活動終了時刻が近づいています", description="活動報告の準備をお願いします。\n下のボタンを押して報告フォームを開くことができます。", color=discord.Color.gold(), timestamp=datetime.datetime.now())
         embed.set_footer(text="電算部Bot")
-        
-        # ReportCogのインスタンスを取得してReminderViewに渡す
         report_cog = self.bot.get_cog("ReportCog")
         if report_cog:
             await interaction.channel.send(embed=embed, view=ReminderView(report_cog))
@@ -50,9 +59,9 @@ class ScheduleManagerCog(commands.Cog):
         else:
             await interaction.response.send_message("エラー: ReportCogの読み込みに失敗しました。", ephemeral=True)
 
-
     @regular.command(name="add", description="定期的な活動を登録します。")
     @app_commands.choices(weekday=WEEKDAY_CHOICES)
+    @app_commands.autocomplete(group=group_autocomplete, location=location_autocomplete) # オートコンプリートを適用
     @app_commands.describe(start_time="HH:MM or hhmm", end_time="HH:MM or hhmm")
     async def add_regular_plan(self, interaction: discord.Interaction, weekday: app_commands.Choice[int], group: str, location: str, start_time: str, end_time: str):
         s_time, e_time = parse_time(start_time), parse_time(end_time)

@@ -1,0 +1,18 @@
+[
+    {
+        "id": "98a9cf7a-0921-4e77-a6d2-87b9d6160a21",
+        "weekday": 1,
+        "group": "Network",
+        "location": "コンピューター室",
+        "start_time": "15:00",
+        "end_time": "17:00"
+    },
+    {
+        "id": "d949a518-4d74-4640-b845-b3239da1dc31",
+        "weekday": 4,
+        "group": "Network",
+        "location": "コンピューター室",
+        "start_time": "15:00",
+        "end_time": "17:00"
+    }
+]

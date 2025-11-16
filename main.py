@@ -3,8 +3,8 @@ from discord.ext import commands
 from dotenv import load_dotenv
 import os
 
-# .envファイルから環境変数を読み込む
-load_dotenv()
+# .envファイルをBOMを許容するエンコーディングで読み込む
+load_dotenv(encoding='utf-8-sig')
 TOKEN = os.getenv("TOKEN")
 
 # Botのインスタンスを作成
