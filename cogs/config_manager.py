@@ -59,6 +59,7 @@ class ConfigCog(commands.Cog):
         embed.add_field(name="代表学生名", value=config.get("student_rep_name", "未設定"), inline=False)
         embed.add_field(name="編集可能なグループ", value="、".join(config.get("editable_groups", [])), inline=False)
         embed.add_field(name="編集可能な場所", value="、".join(config.get("editable_locations", [])), inline=False)
+        embed.add_field(name="テンプレートExcelファイル名", value=config.get("template_file_name", "未設定"), inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @set_group.command(name="advisor", description="顧問名を設定します。")

@@ -62,8 +62,8 @@ REPORT_NOTICE_CHANNEL_ID=YOUR_REPORT_LOG_CHANNEL_ID
 
 ### 4. テンプレートファイルの準備
 
-ルートディレクトリに、活動報告書のテンプレートとなるExcelファイル（例: `[電子計算機部]R0年xx月_活動計画書・活動報告書・活動延長願（複合書式）.xlsx`）を配置してください。
-このファイル名は、後述する `/config` コマンドで変更できます。
+ルートディレクトリに、活動報告書のテンプレートとなるExcelファイル（`[電子計算機部]R0年xx月_活動計画書・活動報告書・活動延長願（複合書式）.xlsx`）を配置してください。
+**注意:** このファイル名は現在Bot内部で固定されています。変更したい場合はBotのソースコード(`cogs/utils.py`)を直接編集する必要があります。
 
 ### 5. Botの起動
 
@@ -137,7 +137,7 @@ REPORT_NOTICE_CHANNEL_ID=YOUR_REPORT_LOG_CHANNEL_ID
 - `/config set student_rep <名前>`: 代表学生名を変更します。
 - `/config group add/remove <名前>`: グループの選択肢を編集します。
 - `/config location add/remove <名前>`: 場所の選択肢を編集します。
-  - **【重要】** 選択肢を変更した後は、`/admin restart` でBotを再起動すると、各コマンドの引数に反映されます。
+  - **【重要】** 選択肢を変更した後は、`/admin restart` でBotを再起動すると、各コマンドの選択肢に反映されます。
 
 ### `/admin` - 管理者用コマンド
 

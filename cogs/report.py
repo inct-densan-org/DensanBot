@@ -85,7 +85,7 @@ class ReportCog(commands.Cog):
                 embed.add_field(name="活動人数", value=f"{participants_num}人", inline=True)
                 if modal.description.value: embed.add_field(name="活動内容・備考", value=modal.description.value, inline=False)
                 embed.set_footer(text=f"報告者: {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
-                await notice_channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+                await notice_channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none(), silent=True)
         except Exception as e:
             print(f"An error occurred in handle_report_submission: {e}")
             await interaction.followup.send(f"申し訳ありません、エラーが発生しました。\n`{e}`", ephemeral=True)
