@@ -121,7 +121,7 @@ class ScheduleManagerCog(commands.Cog):
             embed.set_footer(text="※テスト期間として設定済み（前後1週間も活動休止扱い）")
         return embed
 
-    @tasks.loop(time=datetime.time(hour=8, minute=0, tzinfo=JST))
+    @tasks.loop(time=datetime.time(hour=12, minute=30, tzinfo=JST))
     async def daily_schedule_notifier(self):
         self.reminders_sent_today.clear()
         print(f"[{datetime.datetime.now(JST)}] Reminders sent list has been reset.")
