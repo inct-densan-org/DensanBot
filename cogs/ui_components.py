@@ -101,7 +101,13 @@ class ReportCreationView(discord.ui.View):
             if isinstance(item, GroupSelect):
                 item.disabled = True
         self.add_item(LocationSelect(self))
-        await interaction.edit_original_response(content="次に、活動場所を選択してください。", view=self)
+        
+        embed = discord.Embed(
+            title="活動報告 (2/2)",
+            description="次に、活動場所を選択してください。",
+            color=discord.Color.blue()
+        ).add_field(name="選択済みグループ", value=self.selected_group)
+        await interaction.edit_original_response(embed=embed, view=self)
 
 class GroupSelect(discord.ui.Select):
     def __init__(self, parent_view: ReportCreationView):
@@ -130,7 +136,7 @@ class LocationSelect(discord.ui.Select):
             default_activity_time=defaults.get("activity_time")
         )
         await interaction.response.send_modal(modal)
-        await interaction.edit_original_response(content="フォームを開きました。", view=None)
+        await interaction.edit_original_response(content="📝 フォームを開きました。入力を続けてください。", embed=None, view=None)
 
 class ReminderView(discord.ui.View):
     def __init__(self, cog):
@@ -139,4 +145,9 @@ class ReminderView(discord.ui.View):
 
     @discord.ui.button(label="活動報告を行う", style=discord.ButtonStyle.primary, custom_id="report_button")
     async def open_report_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("まず、報告するグループを選択してください。", view=ReportCreationView(cog=self.cog), ephemeral=True)
+        embed = discord.Embed(
+            title="活動報告 (1/2)",
+            description="まず、報告するグループを選択してください。",
+            color=discord.Color.blue()
+        )
+        await interaction.response.send_message(embed=embed, view=ReportCreationView(cog=self.cog), ephemeral=True)

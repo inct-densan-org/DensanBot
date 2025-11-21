@@ -5,6 +5,8 @@ import json
 import os
 from typing import List
 
+from .utils import group_autocomplete, location_autocomplete
+
 CONFIG_FILE_NAME = "config.json"
 DEFAULT_CONFIG = {
     "advisor_name": "（顧問名未設定）",
@@ -22,7 +24,6 @@ def load_config():
     try:
         with open(CONFIG_FILE_NAME, "r", encoding="utf-8") as f:
             config = json.load(f)
-            # 過去のバージョンとの互換性維持のため、キーが存在しない場合はデフォルト値を設定
             if "template_file_name" not in config:
                 config["template_file_name"] = DEFAULT_CONFIG["template_file_name"]
             return config
@@ -33,28 +34,15 @@ def save_config(data):
     with open(CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# --- オートコンプリート用の関数 ---
-async def group_autocomplete(interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
-    config = load_config()
-    groups = config.get("editable_groups", [])
-    return [app_commands.Choice(name=group, value=group) for group in groups if current.lower() in group.lower()]
-
-async def location_autocomplete(interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
-    config = load_config()
-    locations = config.get("editable_locations", [])
-    return [app_commands.Choice(name=loc, value=loc) for loc in locations if current.lower() in loc.lower()]
-
 class ConfigCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # --- コマンドグループ定義 ---
     config_group = app_commands.Group(name="config", description="Botの各種設定を行います。")
     set_group = app_commands.Group(name="set", parent=config_group, description="設定値を変更します。")
     group_config_group = app_commands.Group(name="group", parent=config_group, description="グループ選択肢の管理")
     location_config_group = app_commands.Group(name="location", parent=config_group, description="場所選択肢の管理")
 
-    # --- 基本設定コマンド ---
     @config_group.command(name="show", description="現在の設定値を表示します。")
     async def show_config(self, interaction: discord.Interaction):
         config = load_config()
@@ -75,7 +63,6 @@ class ConfigCog(commands.Cog):
         config = load_config(); config["student_rep_name"] = name; save_config(config)
         await interaction.response.send_message(f"✅ 代表学生名を「{name}」に設定しました。", ephemeral=True)
 
-    # --- グループ選択肢コマンド ---
     @group_config_group.command(name="add", description="グループの選択肢を追加します。")
     async def add_group(self, interaction: discord.Interaction, name: str):
         config = load_config()
@@ -97,7 +84,6 @@ class ConfigCog(commands.Cog):
         save_config(config)
         await interaction.response.send_message(f"✅ グループ「{name}」を削除しました。\n**【重要】Botを再起動すると、コマンドの選択肢に反映されます。**", ephemeral=True)
 
-    # --- 場所選択肢コマンド ---
     @location_config_group.command(name="add", description="場所の選択肢を追加します。")
     async def add_location(self, interaction: discord.Interaction, name: str):
         config = load_config()

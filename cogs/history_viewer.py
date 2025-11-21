@@ -6,7 +6,6 @@ import os
 import datetime
 
 from .ui_components import PaginationView, ConfirmView
-# 共通関数と定数をutilsからインポート
 from .utils import (
     load_json, save_json, REPORT_LOG_FILE, PLAN_LOG_FILE_NAME, WEEKDAYS
 )
@@ -86,9 +85,9 @@ class HistoryViewerCog(commands.Cog):
         for r in sorted_reports:
             try:
                 date_obj = datetime.datetime.fromisoformat(r['date']).date()
-                title = f"{date_obj.year}年{date_obj.month}月{date_obj.day}日({WEEKDAYS[date_obj.weekday()]})  {r['group']}"
+                title = f"活動報告: {date_obj.isoformat()} ({WEEKDAYS[date_obj.weekday()]}) {r['group']}"
             except (ValueError, KeyError):
-                title = f"活動報告履歴: {r.get('date', '不明')} ({r.get('group', '不明')})"
+                title = f"活動報告: {r.get('date', '不明')} {r.get('group', '不明')}"
             embed = discord.Embed(title=title, color=discord.Color.blue())
             embed.add_field(name="時間", value=f"{r.get('start_time', '?')} - {r.get('end_time', '?')}", inline=False)
             embed.add_field(name="場所", value=r.get('location', '未設定'), inline=True)
@@ -117,7 +116,13 @@ class HistoryViewerCog(commands.Cog):
         sorted_unreported = sorted(unreported, key=lambda p: p["date"])
         embeds = []
         for p in sorted_unreported:
-            embed = discord.Embed(title=f"未報告の計画: {p['date']} ({p['group']})", color=discord.Color.yellow())
+            try:
+                date_obj = datetime.datetime.fromisoformat(p['date']).date()
+                title = f"未報告の計画: {date_obj.isoformat()} ({WEEKDAYS[date_obj.weekday()]}) {p['group']}"
+            except (ValueError, KeyError):
+                title = f"未報告の計画: {p.get('date', '不明')} {p.get('group', '不明')}"
+
+            embed = discord.Embed(title=title, color=discord.Color.yellow())
             embed.add_field(name="予定時間", value=f"{p.get('start_time', '?')} - {p.get('end_time', '?')}", inline=False)
             embed.add_field(name="予定場所", value=p.get('location', '未設定'), inline=True)
             if p.get("plan_details"): embed.add_field(name="予定内容", value=p["plan_details"], inline=False)

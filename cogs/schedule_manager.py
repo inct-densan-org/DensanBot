@@ -4,27 +4,19 @@ from discord.ext import commands, tasks
 import datetime
 import os
 import uuid
-from typing import List
+from typing import List, Optional
 
 from .ui_components import PaginationView, ReminderView
 from .utils import (
     load_json, save_json, JST, WEEKDAYS, parse_time, parse_date,
     REGULAR_PLANS_FILE, OFF_PERIODS_FILE, PLAN_LOG_FILE_NAME,
-    get_group_options, get_location_options # 選択肢取得関数をインポート
+    get_group_options, get_location_options, generate_monthly_schedule,
+    group_autocomplete, location_autocomplete
 )
 
 WEEKDAY_CHOICES = [app_commands.Choice(name=day, value=i) for i, day in enumerate(WEEKDAYS)]
 PLAN_NOTICE_CHANNEL_ID = int(os.getenv("PLAN_NOTICE_CHANNEL_ID", 0))
 REMIND_BEFORE_MINUTES = 15
-
-# --- オートコンプリート用の関数 ---
-async def group_autocomplete(interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
-    groups = get_group_options()
-    return [app_commands.Choice(name=group, value=group) for group in groups if current.lower() in group.lower()]
-
-async def location_autocomplete(interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
-    locations = get_location_options()
-    return [app_commands.Choice(name=loc, value=loc) for loc in locations if current.lower() in loc.lower()]
 
 def get_channel_id_for_group(group_name: str) -> int:
     env_var_name = f"{group_name.upper().replace('･', '_')}_CHANNEL_ID"
@@ -48,20 +40,39 @@ class ScheduleManagerCog(commands.Cog):
     regular = app_commands.Group(name="regular", parent=schedule, description="定期活動の管理")
     off_period = app_commands.Group(name="off-period", parent=schedule, description="活動休止期間の管理")
 
-    @schedule.command(name="send_reminder", description="テスト用にリマインドメッセージを送信します。")
-    async def send_reminder(self, interaction: discord.Interaction):
-        embed = discord.Embed(title="💡 活動終了時刻が近づいています", description="活動報告の準備をお願いします。\n下のボタンを押して報告フォームを開くことができます。", color=discord.Color.gold(), timestamp=datetime.datetime.now())
-        embed.set_footer(text="電算部Bot")
-        report_cog = self.bot.get_cog("ReportCog")
-        if report_cog:
-            await interaction.channel.send(embed=embed, view=ReminderView(report_cog))
-            await interaction.response.send_message("リマインドメッセージを送信しました。", ephemeral=True)
+    @schedule.command(name="generate_sheet", description="指定した月の活動計画をExcelとJSONに生成・更新します。")
+    @app_commands.describe(year="西暦年 (省略時は今年)", month="月 (省略時は今月)", overwrite="Trueにすると、既存の定期活動予定を洗い替えます。")
+    async def generate_sheet(self, interaction: discord.Interaction, year: Optional[int] = None, month: Optional[int] = None, overwrite: bool = False):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        target_date = datetime.date.today()
+        target_year = year if year is not None else target_date.year
+        target_month = month if month is not None else target_date.month
+
+        _, error_msg = generate_monthly_schedule(target_year, target_month, overwrite)
+        if error_msg:
+            await interaction.followup.send(f"エラー: {error_msg}", ephemeral=True)
         else:
+            await interaction.followup.send(f"✅ {target_year}年{target_month}月の活動計画を生成・更新しました。", ephemeral=True)
+
+    @schedule.command(name="send_reminder", description="テスト用にリマインドメッセージを送信します。")
+    @app_commands.describe(group="リマインダーを送る対象のグループ")
+    @app_commands.autocomplete(group=group_autocomplete)
+    async def send_reminder(self, interaction: discord.Interaction, group: str):
+        report_cog = self.bot.get_cog("ReportCog")
+        if not report_cog:
             await interaction.response.send_message("エラー: ReportCogの読み込みに失敗しました。", ephemeral=True)
+            return
+
+        embed = discord.Embed(title=f"💡【{group}】活動終了時刻が近づいています", description=f"活動報告の準備をお願いします。", color=discord.Color.gold())
+        view = ReminderView(report_cog)
+        
+        await interaction.channel.send(embed=embed, view=view)
+        await interaction.response.send_message("リマインドメッセージを送信しました。", ephemeral=True)
 
     @regular.command(name="add", description="定期的な活動を登録します。")
     @app_commands.choices(weekday=WEEKDAY_CHOICES)
-    @app_commands.autocomplete(group=group_autocomplete, location=location_autocomplete) # オートコンプリートを適用
+    @app_commands.autocomplete(group=group_autocomplete, location=location_autocomplete)
     @app_commands.describe(start_time="HH:MM or hhmm", end_time="HH:MM or hhmm")
     async def add_regular_plan(self, interaction: discord.Interaction, weekday: app_commands.Choice[int], group: str, location: str, start_time: str, end_time: str):
         s_time, e_time = parse_time(start_time), parse_time(end_time)
@@ -121,7 +132,7 @@ class ScheduleManagerCog(commands.Cog):
             embed.set_footer(text="※テスト期間として設定済み（前後1週間も活動休止扱い）")
         return embed
 
-    @tasks.loop(time=datetime.time(hour=12, minute=30, tzinfo=JST))
+    @tasks.loop(time=datetime.time(hour=8, minute=0, tzinfo=JST))
     async def daily_schedule_notifier(self):
         self.reminders_sent_today.clear()
         print(f"[{datetime.datetime.now(JST)}] Reminders sent list has been reset.")
@@ -130,9 +141,9 @@ class ScheduleManagerCog(commands.Cog):
         today_str = datetime.date.today().isoformat()
         if not (todays_plans := plan_log.get(today_str, {}).get("groups")): return
         embed = discord.Embed(title=f"📢 今日の活動予定 ({datetime.date.today().strftime('%m/%d')})", color=discord.Color.blue())
-        for group, plan in todays_plans.items():
+        for group, plan in sorted(todays_plans.items()):
             embed.add_field(name=f"【{group}】 {plan.get('start_time', '?')} - {plan.get('end_time', '?')}", value=f"**場所:** {plan.get('location', '?')}\n**予定:** {plan.get('plan_details', '特になし')}", inline=False)
-        embed.set_footer(text="活動計画は /plan add コマンドで追加・更新できます。")
+        embed.set_footer(text="活動計画は /plan list コマンドで編集・削除できます。")
         await channel.send(embed=embed)
 
     @tasks.loop(minutes=1)

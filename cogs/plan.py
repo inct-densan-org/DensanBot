@@ -5,10 +5,12 @@ import datetime
 import openpyxl
 import uuid
 import re
+from typing import Optional
 
 from .utils import (
     load_json, save_json, create_new_month_excel_if_needed, parse_date, parse_time,
-    PLAN_LOG_FILE_NAME, get_group_options, get_location_options, WEEKDAYS, ZEN_TO_HAN
+    PLAN_LOG_FILE_NAME, get_group_options, get_location_options, WEEKDAYS, ZEN_TO_HAN,
+    generate_monthly_schedule, group_autocomplete
 )
 from .ui_components import PaginationView, ConfirmView
 
@@ -105,7 +107,9 @@ class PlanCog(commands.Cog):
         await interaction.response.send_modal(PlanModal(cog=self, group=group.value, location=location.value))
 
     @plan.command(name="list", description="今後の活動計画を一覧表示・編集・削除します。")
-    async def list_plans(self, interaction: discord.Interaction):
+    @app_commands.describe(group="表示するグループを絞り込みます。")
+    @app_commands.autocomplete(group=group_autocomplete)
+    async def list_plans(self, interaction: discord.Interaction, group: Optional[str] = None):
         await interaction.response.defer(ephemeral=True)
         plan_log = load_json(PLAN_LOG_FILE_NAME)
         if not plan_log:
@@ -117,6 +121,8 @@ class PlanCog(commands.Cog):
         for date_str, daily_data in plan_log.items():
             if date_str >= today_str:
                 for group_name, plan_data in daily_data.get("groups", {}).items():
+                    if group and group.lower() not in group_name.lower():
+                        continue
                     if "id" not in plan_data:
                         plan_data["id"] = str(uuid.uuid4())
                     plan_data["date"] = date_str
@@ -127,16 +133,16 @@ class PlanCog(commands.Cog):
 
         sorted_plans = sorted(future_plans, key=lambda p: (p["date"], p.get("start_time", "")))
         if not sorted_plans:
-            await interaction.followup.send("今後の活動計画はありません。", ephemeral=True)
+            await interaction.followup.send("指定された条件に一致する今後の活動計画はありません。", ephemeral=True)
             return
 
         embeds = []
         for p in sorted_plans:
             try:
                 date_obj = datetime.datetime.fromisoformat(p['date']).date()
-                title = f"{date_obj.year}年{date_obj.month}月{date_obj.day}日({WEEKDAYS[date_obj.weekday()]})  {p['group']}"
+                title = f"活動計画: {date_obj.isoformat()} ({WEEKDAYS[date_obj.weekday()]}) {p['group']}"
             except (ValueError, KeyError):
-                title = f"活動計画: {p.get('date', '不明')} ({p.get('group', '不明')})"
+                title = f"活動計画: {p.get('date', '不明')} {p.get('group', '不明')}"
             
             embed = discord.Embed(title=title, color=discord.Color.blue())
             embed.add_field(name="予定時間", value=f"{p.get('start_time', '?')} - {p.get('end_time', '?')}", inline=False)
@@ -159,7 +165,7 @@ class PlanCog(commands.Cog):
                 return
             plan_date = datetime.date.fromisoformat(plan_date_str)
 
-            target_filename, error_msg = await create_new_month_excel_if_needed(plan_date.year, plan_date.month)
+            excel_filename, error_msg = await create_new_month_excel_if_needed(plan_date.year, plan_date.month)
             if error_msg:
                 await interaction.followup.send(f"エラー: {error_msg}", ephemeral=True)
                 return
@@ -177,13 +183,18 @@ class PlanCog(commands.Cog):
 
             plan_log = load_json(PLAN_LOG_FILE_NAME)
             
+            is_regular_flag = False
             for date_key in list(plan_log.keys()):
                 for group_key in list(plan_log[date_key].get("groups", {}).keys()):
                     if plan_log[date_key]["groups"][group_key].get("id") == modal.plan_id:
+                        is_regular_flag = plan_log[date_key]["groups"][group_key].get("is_regular", False)
                         del plan_log[date_key]["groups"][group_key]
                         if not plan_log[date_key]["groups"]:
                             del plan_log[date_key]
                         break
+                else:
+                    continue
+                break
 
             if plan_date_str not in plan_log:
                 plan_log[plan_date_str] = {"groups": {}}
@@ -192,36 +203,19 @@ class PlanCog(commands.Cog):
                 "id": modal.plan_id,
                 "start_time": formatted_start, "end_time": formatted_end,
                 "location": location_name, "plan_details": modal.plan_details.value,
+                "is_regular": is_regular_flag
             }
             save_json(PLAN_LOG_FILE_NAME, plan_log)
 
-            todays_plans = plan_log[plan_date_str]["groups"]
-            final_start = min(v["start_time"] for v in todays_plans.values() if v["start_time"])
-            final_end = max(v["end_time"] for v in todays_plans.values() if v["end_time"])
-            location_parts = [f'{v["location"]}({k})' if k and k != "その他" else v["location"] for k, v in todays_plans.items()]
-            final_location = " | ".join(sorted(list(set(location_parts))))
-            plan_detail_parts = []
-            for gn, plan_info in todays_plans.items():
-                detail = plan_info.get('plan_details')
-                if detail:
-                    plan_detail_parts.append(f"{detail}({gn})" if gn and gn != "その他" else detail)
-            final_plan_details = "、".join(sorted(list(set(plan_detail_parts))))
+            _, error_msg = generate_monthly_schedule(plan_date.year, plan_date.month, overwrite=False)
+            if error_msg:
+                await interaction.followup.send(f"警告: Excelファイルの更新中にエラーが発生しました: {error_msg}", ephemeral=True)
 
-            try:
-                workbook = openpyxl.load_workbook(target_filename)
-                sheet = workbook["活動計画書"]
-                target_row = plan_date.day + 6
-                sheet[f"C{target_row}"] = final_start
-                sheet[f"E{target_row}"] = final_end
-                sheet[f"F{target_row}"] = final_location
-                sheet[f"G{target_row}"] = final_plan_details
-                workbook.save(target_filename)
-                await interaction.followup.send(f"{plan_date_str} の活動計画を記録・更新しました。", ephemeral=True)
-            except (FileNotFoundError, KeyError) as e:
-                await interaction.followup.send(f"Excelエラー: {e}", ephemeral=True)
+            await interaction.followup.send(f"{plan_date_str} の活動計画を記録・更新しました。", ephemeral=True)
 
         except Exception as e:
-            print(f"An error occurred in handle_plan_submission: {e}")
+            import traceback
+            print(f"An error occurred in handle_plan_submission: {e}\n{traceback.format_exc()}")
             await interaction.followup.send(f"申し訳ありません、エラーが発生しました: {e}", ephemeral=True)
 
 async def setup(bot: commands.Bot):
