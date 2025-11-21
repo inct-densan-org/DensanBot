@@ -18,7 +18,7 @@ class MyBot(commands.Bot):
 
     async def setup_hook(self):
         # 除外するユーティリティファイルのリスト
-        exclude_files = ["ui_components.py", "utils.py", "schedule.py"]
+        exclude_files = ["ui_components.py", "utils.py"]
 
         # cogsフォルダ内のPythonファイルを読み込む
         for filename in os.listdir("./cogs"):

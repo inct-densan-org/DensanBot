@@ -9,9 +9,9 @@ import os
 
 from .utils import (
     load_json, save_json, get_excel_filename_for_month, parse_time,
-    REPORT_LOG_FILE, ZEN_TO_HAN, get_group_options
+    REPORT_LOG_FILE, ZEN_TO_HAN, get_group_options, get_location_options
 )
-from .ui_components import ReportModal, ReminderView
+from .ui_components import ReportModal, ReminderView, get_todays_plan_defaults
 
 REPORT_NOTICE_CHANNEL_ID = int(os.getenv("REPORT_NOTICE_CHANNEL_ID", 0))
 
@@ -23,9 +23,20 @@ class ReportCog(commands.Cog):
     report = app_commands.Group(name="report", description="活動報告に関するコマンド")
 
     @report.command(name="open", description="活動報告モーダルを開きます。")
-    @app_commands.choices(group=[app_commands.Choice(name=opt, value=opt) for opt in get_group_options()])
-    async def open_modal(self, interaction: discord.Interaction, group: app_commands.Choice[str]):
-        await interaction.response.send_modal(ReportModal(cog=self, default_group=group.value))
+    @app_commands.choices(
+        group=[app_commands.Choice(name=opt, value=opt) for opt in get_group_options()],
+        location=[app_commands.Choice(name=opt, value=opt) for opt in get_location_options()]
+    )
+    async def open_modal(self, interaction: discord.Interaction, group: app_commands.Choice[str], location: app_commands.Choice[str]):
+        defaults = get_todays_plan_defaults(group.value)
+        await interaction.response.send_modal(
+            ReportModal(
+                cog=self, 
+                group=group.value,
+                location=location.value,
+                default_activity_time=defaults.get("activity_time")
+            )
+        )
 
     async def handle_report_submission(self, interaction: discord.Interaction, modal: ReportModal):
         try:
@@ -47,11 +58,14 @@ class ReportCog(commands.Cog):
             try: participants_num = int(modal.participants.value.translate(ZEN_TO_HAN))
             except (ValueError, TypeError): participants_num = 0
             
+            group_name = modal.group.value
+            location_name = modal.location.value
+
             report_log = load_json(REPORT_LOG_FILE)
             today_str = today.isoformat()
             if today_str not in report_log: report_log[today_str] = {"groups": {}}
-            report_log[today_str]["groups"][modal.group.value] = {
-                "start_time": start_time, "end_time": end_time, "location": modal.location.value, 
+            report_log[today_str]["groups"][group_name] = {
+                "start_time": start_time, "end_time": end_time, "location": location_name, 
                 "participants": participants_num, "description": modal.description.value, "reporter": interaction.user.display_name,
             }
             save_json(REPORT_LOG_FILE, report_log)
@@ -61,7 +75,7 @@ class ReportCog(commands.Cog):
             final_end = max((v["end_time"] for v in todays_reports.values() if v["end_time"]), default="")
             total_participants = sum(v["participants"] for v in todays_reports.values())
             loc_parts = [f'{v["location"]}({k})' if k and k != "その他" else v["location"] for k, v in todays_reports.items()]
-            final_loc = " | ".join(loc_parts)
+            final_loc = " | ".join(sorted(list(set(loc_parts))))
             desc_parts = [f'({k}) {v["description"]}' if v.get("description") and k and k != "その他" else (v.get("description") or "") for k, v in todays_reports.items()]
             final_desc = " | ".join(filter(None, desc_parts))
 
@@ -79,9 +93,9 @@ class ReportCog(commands.Cog):
                 return
 
             if REPORT_NOTICE_CHANNEL_ID != 0 and (notice_channel := interaction.guild.get_channel(REPORT_NOTICE_CHANNEL_ID)):
-                embed = discord.Embed(title=f"📝 活動報告がありました ({modal.group.value})", color=discord.Color.green(), timestamp=datetime.datetime.now())
+                embed = discord.Embed(title=f"📝 活動報告がありました ({group_name})", color=discord.Color.green(), timestamp=datetime.datetime.now())
                 embed.add_field(name="活動時間", value=f"{start_time} - {end_time}", inline=False)
-                embed.add_field(name="活動場所", value=modal.location.value, inline=True)
+                embed.add_field(name="活動場所", value=location_name, inline=True)
                 embed.add_field(name="活動人数", value=f"{participants_num}人", inline=True)
                 if modal.description.value: embed.add_field(name="活動内容・備考", value=modal.description.value, inline=False)
                 embed.set_footer(text=f"報告者: {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)

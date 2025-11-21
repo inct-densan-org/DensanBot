@@ -5,24 +5,11 @@ import json
 import os
 import datetime
 
-from .ui_components import PaginationView
+from .ui_components import PaginationView, ConfirmView
 # 共通関数と定数をutilsからインポート
 from .utils import (
     load_json, save_json, REPORT_LOG_FILE, PLAN_LOG_FILE_NAME, WEEKDAYS
 )
-
-class ConfirmView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=60)
-        self.value = None
-
-    @discord.ui.button(label="はい", style=discord.ButtonStyle.danger)
-    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.value = True; self.stop(); await interaction.response.defer()
-
-    @discord.ui.button(label="いいえ", style=discord.ButtonStyle.secondary)
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.value = False; self.stop(); await interaction.response.defer()
 
 class ReportHistoryActionView(PaginationView):
     def __init__(self, embeds: list[discord.Embed], interaction: discord.Interaction, reports: list[dict]):

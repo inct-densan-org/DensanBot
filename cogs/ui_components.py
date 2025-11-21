@@ -2,8 +2,7 @@ import discord
 from typing import Dict, Any
 import datetime
 
-# 循環インポートを避けるため、モーダルはUIコンポーネントファイル内で定義
-from .utils import get_group_options, PLAN_LOG_FILE_NAME, load_json
+from .utils import get_group_options, get_location_options, PLAN_LOG_FILE_NAME, load_json
 
 def get_todays_plan_defaults(group_name: str) -> Dict[str, Any]:
     """今日の活動計画ログを読み込み、指定されたグループのデフォルト値を取得する"""
@@ -15,6 +14,19 @@ def get_todays_plan_defaults(group_name: str) -> Dict[str, Any]:
         if start and end: defaults["activity_time"] = f"{start} - {end}"
         defaults["location"] = todays_plan.get("location")
     return defaults
+
+class ConfirmView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=60)
+        self.value = None
+
+    @discord.ui.button(label="はい", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.value = True; self.stop(); await interaction.response.defer()
+
+    @discord.ui.button(label="いいえ", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.value = False; self.stop(); await interaction.response.defer()
 
 class PaginationView(discord.ui.View):
     """Embedのリストをページめくりで表示するための汎用View。"""
@@ -56,39 +68,67 @@ class PaginationView(discord.ui.View):
         await interaction.message.delete()
 
 class ReportModal(discord.ui.Modal, title="活動報告"):
-    def __init__(self, cog, default_group: str | None = None, default_location: str | None = None, default_activity_time: str | None = None):
-        super().__init__()
-        self.cog = cog
-        if default_group and default_group != "その他": self.group.default = default_group
-        else: self.group.placeholder = "活動したグループ名を入力してください"
-        if default_location and default_location != "その他": self.location.default = default_location
-        else: self.location.placeholder = "活動した場所を入力してください"
-        if default_activity_time: self.activity_time.default = default_activity_time
-
-    participants = discord.ui.TextInput(label="活動人数", placeholder="半角数字で入力してください")
-    description = discord.ui.TextInput(label="活動内容・備考", style=discord.TextStyle.paragraph, required=False)
-    activity_time = discord.ui.TextInput(label="活動時間 (開始 - 終了) (ショートハンド: hhmmhhmm)", placeholder="例: 15:00 - 17:00")
     group = discord.ui.TextInput(label="グループ")
     location = discord.ui.TextInput(label="活動場所")
+    activity_time = discord.ui.TextInput(label="活動時間 (開始 - 終了)", placeholder="例: 15:00-17:00 or 1500-1700")
+    participants = discord.ui.TextInput(label="活動人数", placeholder="半角数字で入力してください")
+    description = discord.ui.TextInput(label="活動内容・備考", style=discord.TextStyle.paragraph, required=False)
+
+    def __init__(self, cog, group: str, location: str, default_activity_time: str | None = None):
+        super().__init__()
+        self.cog = cog
+        self.group.default = group
+        self.location.default = location
+        if group == "その他":
+            self.group.placeholder = "活動したグループ名を入力してください"
+        if location == "その他":
+            self.location.placeholder = "活動した場所を入力してください"
+        if default_activity_time:
+            self.activity_time.default = default_activity_time
 
     async def on_submit(self, interaction: discord.Interaction):
         await self.cog.handle_report_submission(interaction, self)
 
-class ReportSelectView(discord.ui.View):
+class ReportCreationView(discord.ui.View):
     def __init__(self, cog):
         super().__init__(timeout=300)
         self.cog = cog
-        self.add_item(GroupSelect(cog=self.cog))
+        self.selected_group = None
+        self.add_item(GroupSelect(self))
+
+    async def update_view(self, interaction: discord.Interaction):
+        for item in self.children:
+            if isinstance(item, GroupSelect):
+                item.disabled = True
+        self.add_item(LocationSelect(self))
+        await interaction.edit_original_response(content="次に、活動場所を選択してください。", view=self)
 
 class GroupSelect(discord.ui.Select):
-    def __init__(self, cog):
-        self.cog = cog
+    def __init__(self, parent_view: ReportCreationView):
+        self.parent_view = parent_view
         options = [discord.SelectOption(label=opt, value=opt) for opt in get_group_options()]
         super().__init__(placeholder="あなたの所属グループを選択してください", options=options)
+
     async def callback(self, interaction: discord.Interaction):
-        selected_group = self.values[0]
-        defaults = get_todays_plan_defaults(selected_group)
-        modal = ReportModal(cog=self.cog, default_group=selected_group, default_location=defaults.get("location"), default_activity_time=defaults.get("activity_time"))
+        self.parent_view.selected_group = self.values[0]
+        await interaction.response.defer()
+        await self.parent_view.update_view(interaction)
+
+class LocationSelect(discord.ui.Select):
+    def __init__(self, parent_view: ReportCreationView):
+        self.parent_view = parent_view
+        options = [discord.SelectOption(label=opt, value=opt) for opt in get_location_options()]
+        super().__init__(placeholder="活動場所を選択してください", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_location = self.values[0]
+        defaults = get_todays_plan_defaults(self.parent_view.selected_group)
+        modal = ReportModal(
+            cog=self.parent_view.cog,
+            group=self.parent_view.selected_group,
+            location=selected_location,
+            default_activity_time=defaults.get("activity_time")
+        )
         await interaction.response.send_modal(modal)
         await interaction.edit_original_response(content="フォームを開きました。", view=None)
 
@@ -99,4 +139,4 @@ class ReminderView(discord.ui.View):
 
     @discord.ui.button(label="活動報告を行う", style=discord.ButtonStyle.primary, custom_id="report_button")
     async def open_report_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("まず、報告するグループを選択してください。", view=ReportSelectView(cog=self.cog), ephemeral=True)
+        await interaction.response.send_message("まず、報告するグループを選択してください。", view=ReportCreationView(cog=self.cog), ephemeral=True)

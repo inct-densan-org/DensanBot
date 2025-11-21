@@ -21,7 +21,11 @@ def load_config():
         return DEFAULT_CONFIG
     try:
         with open(CONFIG_FILE_NAME, "r", encoding="utf-8") as f:
-            return json.load(f)
+            config = json.load(f)
+            # 過去のバージョンとの互換性維持のため、キーが存在しない場合はデフォルト値を設定
+            if "template_file_name" not in config:
+                config["template_file_name"] = DEFAULT_CONFIG["template_file_name"]
+            return config
     except (json.JSONDecodeError, FileNotFoundError):
         return DEFAULT_CONFIG
 
@@ -59,7 +63,6 @@ class ConfigCog(commands.Cog):
         embed.add_field(name="代表学生名", value=config.get("student_rep_name", "未設定"), inline=False)
         embed.add_field(name="編集可能なグループ", value="、".join(config.get("editable_groups", [])), inline=False)
         embed.add_field(name="編集可能な場所", value="、".join(config.get("editable_locations", [])), inline=False)
-        embed.add_field(name="テンプレートExcelファイル名", value=config.get("template_file_name", "未設定"), inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @set_group.command(name="advisor", description="顧問名を設定します。")
