@@ -10,8 +10,6 @@ import re
 import uuid
 from typing import List
 
-from .config_manager import load_config
-
 # --- 定数 ---
 JST = datetime.timezone(datetime.timedelta(hours=9))
 WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
@@ -19,11 +17,13 @@ ZEN_TO_HAN = str.maketrans("０１２３４５６７８９：－", "0123456789:-
 
 # --- 動的な選択肢の生成 ---
 def get_group_options() -> list[str]:
+    from .config_manager import load_config
     config = load_config()
     editable_groups = config.get("editable_groups", [])
     return list(dict.fromkeys(editable_groups + ["全体", "その他"]))
 
 def get_location_options() -> list[str]:
+    from .config_manager import load_config
     config = load_config()
     editable_locations = config.get("editable_locations", [])
     return list(dict.fromkeys(editable_locations + ["その他"]))
@@ -101,6 +101,7 @@ def get_excel_filename_for_month(year: int, month: int) -> str:
     return f"[電子計算機部]R{wareki_year}年{month:02}月_活動計画書・活動報告書・活動延長願（複合書式）.xlsx"
 
 def generate_monthly_schedule(year: int, month: int, overwrite: bool = False) -> tuple[str | None, str | None]:
+    from .config_manager import load_config
     excel_filename = get_excel_filename_for_month(year, month)
     config = load_config()
     
