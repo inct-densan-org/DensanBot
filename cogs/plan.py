@@ -5,14 +5,14 @@ import datetime
 import openpyxl
 import uuid
 import re
-from typing import Optional
+from typing import Optional, List, Dict
 
 from .utils import (
     load_json, save_json, create_new_month_excel_if_needed, parse_date, parse_time,
     PLAN_LOG_FILE_NAME, get_group_options, get_location_options, WEEKDAYS, ZEN_TO_HAN,
-    generate_monthly_schedule, group_autocomplete
+    generate_monthly_schedule, group_autocomplete, JST
 )
-from .ui_components import PaginationView, ConfirmView
+from .ui_components import PagedItemView, ConfirmView
 
 class PlanModal(discord.ui.Modal, title="活動計画の入力"):
     group = discord.ui.TextInput(label="グループ")
@@ -44,32 +44,30 @@ class PlanModal(discord.ui.Modal, title="活動計画の入力"):
     async def on_submit(self, interaction: discord.Interaction):
         await self.cog.handle_plan_submission(interaction, self)
 
-class PlanActionView(PaginationView):
-    def __init__(self, embeds: list[discord.Embed], interaction: discord.Interaction, plans: list[dict], cog):
-        super().__init__(embeds, interaction)
-        self.plans = plans
+class PlanDetailView(discord.ui.View):
+    def __init__(self, plan: dict, cog):
+        super().__init__(timeout=60)
+        self.plan = plan
         self.cog = cog
 
-    @discord.ui.button(label="編集", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="編集", style=discord.ButtonStyle.secondary)
     async def edit_plan(self, interaction: discord.Interaction, button: discord.ui.Button):
-        plan_to_edit = self.plans[self.current_page]
         modal = PlanModal(
             cog=self.cog,
-            group=plan_to_edit["group"],
-            location=plan_to_edit["location"],
-            plan_id=plan_to_edit["id"],
-            defaults=plan_to_edit
+            group=self.plan["group"],
+            location=self.plan["location"],
+            plan_id=self.plan["id"],
+            defaults=self.plan
         )
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="削除", style=discord.ButtonStyle.danger, row=1)
+    @discord.ui.button(label="削除", style=discord.ButtonStyle.danger)
     async def delete_plan(self, interaction: discord.Interaction, button: discord.ui.Button):
-        plan_to_delete = self.plans[self.current_page]
         confirm_view = ConfirmView()
-        await interaction.response.send_message(f"**確認:** {plan_to_delete['date']} の **{plan_to_delete['group']}** の計画を本当に削除しますか？", view=confirm_view, ephemeral=True)
+        await interaction.response.send_message(f"**確認:** {self.plan['date']} の **{self.plan['group']}** の計画を本当に削除しますか？", view=confirm_view, ephemeral=True)
         await confirm_view.wait()
         if confirm_view.value:
-            date_str, plan_id = plan_to_delete["date"], plan_to_delete["id"]
+            date_str, plan_id = self.plan["date"], self.plan["id"]
             plan_log = load_json(PLAN_LOG_FILE_NAME)
             if date_str in plan_log:
                 group_to_delete = None
@@ -84,13 +82,11 @@ class PlanActionView(PaginationView):
                         del plan_log[date_str]
                     save_json(PLAN_LOG_FILE_NAME, plan_log)
                     await interaction.followup.send(f"✅ {date_str} の {group_to_delete} の計画を削除しました。", ephemeral=True)
-                    await self.interaction.message.delete()
                     return
 
             await interaction.followup.send("エラー: 対象の計画が見つかりませんでした。", ephemeral=True)
         else:
             await interaction.followup.send("操作をキャンセルしました。", ephemeral=True)
-
 
 class PlanCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -117,7 +113,7 @@ class PlanCog(commands.Cog):
             return
 
         future_plans = []
-        today_str = datetime.date.today().isoformat()
+        today_str = datetime.datetime.now(JST).date().isoformat()
         for date_str, daily_data in plan_log.items():
             if date_str >= today_str:
                 for group_name, plan_data in daily_data.get("groups", {}).items():
@@ -136,23 +132,65 @@ class PlanCog(commands.Cog):
             await interaction.followup.send("指定された条件に一致する今後の活動計画はありません。", ephemeral=True)
             return
 
-        embeds = []
-        for p in sorted_plans:
-            try:
-                date_obj = datetime.datetime.fromisoformat(p['date']).date()
-                title = f"活動計画: {date_obj.isoformat()} ({WEEKDAYS[date_obj.weekday()]}) {p['group']}"
-            except (ValueError, KeyError):
-                title = f"活動計画: {p.get('date', '不明')} {p.get('group', '不明')}"
+        def embed_factory(items: List[Dict], current_page: int, total_pages: int) -> discord.Embed:
+            embed = discord.Embed(title="今後の活動計画", color=discord.Color.blue())
+            for p in items:
+                try:
+                    date_obj = datetime.datetime.fromisoformat(p['date']).date()
+                    title = f"{date_obj.year}年{date_obj.month}月{date_obj.day}日({WEEKDAYS[date_obj.weekday()]})  {p['group']}"
+                except (ValueError, KeyError):
+                    title = f"{p.get('date', '不明')} {p.get('group', '不明')}"
+                
+                value = f"**時間:** {p.get('start_time', '?')} - {p.get('end_time', '?')}\n**場所:** {p.get('location', '未設定')}"
+                if p.get("plan_details"):
+                    value += f"\n**内容:** {p['plan_details']}"
+                embed.add_field(name=title, value=value, inline=False)
             
-            embed = discord.Embed(title=title, color=discord.Color.blue())
-            embed.add_field(name="予定時間", value=f"{p.get('start_time', '?')} - {p.get('end_time', '?')}", inline=False)
-            embed.add_field(name="予定場所", value=p.get('location', '未設定'), inline=True)
-            if p.get("plan_details"):
-                embed.add_field(name="予定内容", value=p["plan_details"], inline=False)
-            embeds.append(embed)
+            embed.set_footer(text=f"ページ {current_page}/{total_pages}")
+            return embed
 
-        view = PlanActionView(embeds, interaction, sorted_plans, self)
-        await interaction.followup.send(embed=embeds[0], view=view, ephemeral=True)
+        def select_options_factory(items: List[Dict]) -> List[discord.SelectOption]:
+            options = []
+            for p in items:
+                try:
+                    date_obj = datetime.datetime.fromisoformat(p['date']).date()
+                    label = f"{date_obj.month}/{date_obj.day} {p['group']}"
+                except:
+                    label = f"{p.get('date')} {p.get('group')}"
+                
+                # ラベルが長すぎる場合は切り詰める
+                if len(label) > 100:
+                    label = label[:97] + "..."
+                
+                description = f"{p.get('start_time')} - {p.get('end_time')} @ {p.get('location')}"
+                if len(description) > 100:
+                    description = description[:97] + "..."
+
+                options.append(discord.SelectOption(label=label, value=p["id"], description=description))
+            return options
+
+        async def on_select_callback(interaction: discord.Interaction, selected_value: str):
+            selected_plan = next((p for p in sorted_plans if p["id"] == selected_value), None)
+            if selected_plan:
+                try:
+                    date_obj = datetime.datetime.fromisoformat(selected_plan['date']).date()
+                    title = f"{date_obj.year}年{date_obj.month}月{date_obj.day}日({WEEKDAYS[date_obj.weekday()]})  {selected_plan['group']}"
+                except:
+                    title = f"{selected_plan.get('date')} {selected_plan.get('group')}"
+
+                embed = discord.Embed(title=title, color=discord.Color.green())
+                embed.add_field(name="予定時間", value=f"{selected_plan.get('start_time', '?')} - {selected_plan.get('end_time', '?')}", inline=False)
+                embed.add_field(name="予定場所", value=selected_plan.get('location', '未設定'), inline=True)
+                if selected_plan.get("plan_details"):
+                    embed.add_field(name="予定内容", value=selected_plan["plan_details"], inline=False)
+                
+                view = PlanDetailView(selected_plan, self)
+                await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            else:
+                await interaction.response.send_message("エラー: 選択された計画が見つかりませんでした。", ephemeral=True)
+
+        view = PagedItemView(sorted_plans, interaction, embed_factory, select_options_factory, on_select_callback)
+        await interaction.followup.send(embed=embed_factory(sorted_plans[:3], 1, view.total_pages), view=view, ephemeral=True)
 
 
     async def handle_plan_submission(self, interaction: discord.Interaction, modal: PlanModal):

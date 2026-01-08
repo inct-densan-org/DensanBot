@@ -9,7 +9,7 @@ import os
 
 from .utils import (
     load_json, save_json, get_excel_filename_for_month, parse_time,
-    REPORT_LOG_FILE, ZEN_TO_HAN, get_group_options, get_location_options
+    REPORT_LOG_FILE, ZEN_TO_HAN, get_group_options, get_location_options, JST
 )
 from .ui_components import ReportModal, ReminderView, get_todays_plan_defaults
 
@@ -41,7 +41,7 @@ class ReportCog(commands.Cog):
     async def handle_report_submission(self, interaction: discord.Interaction, modal: ReportModal):
         try:
             await interaction.response.defer(ephemeral=True, thinking=True)
-            today = datetime.date.today()
+            today = datetime.datetime.now(JST).date()
             target_excel_file = get_excel_filename_for_month(today.year, today.month)
             if not os.path.exists(target_excel_file):
                 await interaction.followup.send(f"エラー: 今月({today.year}年{today.month}月)のExcelファイルが存在しません。`/plan add`で計画を立てると自動で作成されます。", ephemeral=True)

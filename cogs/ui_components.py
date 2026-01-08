@@ -1,5 +1,5 @@
 import discord
-from typing import Dict, Any
+from typing import Dict, Any, List, Callable
 import datetime
 
 from .utils import get_group_options, get_location_options, PLAN_LOG_FILE_NAME, load_json
@@ -30,12 +30,17 @@ class ConfirmView(discord.ui.View):
 
 class PaginationView(discord.ui.View):
     """Embedのリストをページめくりで表示するための汎用View。"""
-    def __init__(self, embeds: list[discord.Embed], interaction: discord.Interaction):
+    def __init__(self, embeds: list[discord.Embed], interaction: discord.Interaction, ephemeral: bool = False):
         super().__init__(timeout=300)
         self.embeds = embeds
         self.interaction = interaction
         self.current_page = 0
         self.total_pages = len(embeds)
+        self.ephemeral = ephemeral
+        
+        if self.ephemeral:
+            self.remove_item(self.close_view)
+            
         self._update_buttons()
 
     async def show_current_page(self):
@@ -66,6 +71,89 @@ class PaginationView(discord.ui.View):
     @discord.ui.button(label="閉じる", style=discord.ButtonStyle.danger, row=1)
     async def close_view(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.message.delete()
+
+class PagedItemView(discord.ui.View):
+    """
+    アイテムリストをページング表示し、ドロップダウンで選択してアクションを行うための汎用View。
+    """
+    def __init__(self, items: List[Dict], interaction: discord.Interaction, 
+                 embed_factory: Callable[[List[Dict], int, int], discord.Embed], 
+                 select_options_factory: Callable[[List[Dict]], List[discord.SelectOption]],
+                 on_select_callback: Callable[[discord.Interaction, str], Any],
+                 items_per_page: int = 3,
+                 ephemeral: bool = False):
+        super().__init__(timeout=300)
+        self.items = items
+        self.interaction = interaction
+        self.embed_factory = embed_factory
+        self.select_options_factory = select_options_factory
+        self.on_select_callback = on_select_callback
+        self.items_per_page = items_per_page
+        self.current_page = 0
+        self.total_pages = (len(items) + items_per_page - 1) // items_per_page
+        self.ephemeral = ephemeral
+        
+        self.update_components()
+
+    def update_components(self):
+        self.clear_items()
+        
+        # ページネーションボタン
+        if self.total_pages > 1:
+            prev_btn = discord.ui.Button(label="<< 前へ", style=discord.ButtonStyle.secondary, disabled=(self.current_page == 0))
+            prev_btn.callback = self.prev_page
+            self.add_item(prev_btn)
+
+            next_btn = discord.ui.Button(label="次へ >>", style=discord.ButtonStyle.secondary, disabled=(self.current_page >= self.total_pages - 1))
+            next_btn.callback = self.next_page
+            self.add_item(next_btn)
+
+        # 閉じるボタン (ephemeralでない場合のみ表示)
+        if not self.ephemeral:
+            close_btn = discord.ui.Button(label="閉じる", style=discord.ButtonStyle.danger, row=1)
+            close_btn.callback = self.close_view
+            self.add_item(close_btn)
+
+        # ドロップダウンメニュー
+        start_idx = self.current_page * self.items_per_page
+        end_idx = start_idx + self.items_per_page
+        current_items = self.items[start_idx:end_idx]
+        
+        if current_items:
+            options = self.select_options_factory(current_items)
+            if options:
+                select = discord.ui.Select(placeholder="操作する項目を選択してください", options=options, row=2)
+                select.callback = self.on_select
+                self.add_item(select)
+
+    async def update_view(self):
+        self.update_components()
+        start_idx = self.current_page * self.items_per_page
+        end_idx = start_idx + self.items_per_page
+        current_items = self.items[start_idx:end_idx]
+        
+        embed = self.embed_factory(current_items, self.current_page + 1, self.total_pages)
+        await self.interaction.edit_original_response(embed=embed, view=self)
+
+    async def prev_page(self, interaction: discord.Interaction):
+        if self.current_page > 0:
+            self.current_page -= 1
+            await interaction.response.defer()
+            await self.update_view()
+
+    async def next_page(self, interaction: discord.Interaction):
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            await interaction.response.defer()
+            await self.update_view()
+
+    async def close_view(self, interaction: discord.Interaction):
+        await interaction.message.delete()
+
+    async def on_select(self, interaction: discord.Interaction):
+        selected_value = interaction.data['values'][0]
+        await self.on_select_callback(interaction, selected_value)
+
 
 class ReportModal(discord.ui.Modal, title="活動報告"):
     group = discord.ui.TextInput(label="グループ")

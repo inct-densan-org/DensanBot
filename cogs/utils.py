@@ -14,6 +14,7 @@ from typing import List
 JST = datetime.timezone(datetime.timedelta(hours=9))
 WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
 ZEN_TO_HAN = str.maketrans("０１２３４５６７８９：－", "0123456789:-")
+REGULAR_PLAN_DETAILS_TEXT = "定期活動"  # 定期活動の備考文言
 
 # --- 動的な選択肢の生成 ---
 def get_group_options() -> list[str]:
@@ -124,7 +125,8 @@ def generate_monthly_schedule(year: int, month: int, overwrite: bool = False) ->
             for date_str in list(plan_log.keys()):
                 if f"{year}-{month:02}" in date_str:
                     for group, plan_data in list(plan_log[date_str]["groups"].items()):
-                        if plan_data.get("is_regular", False):
+                        # 定期活動フラグがある、または備考が定期活動の定型文と一致する場合に削除
+                        if plan_data.get("is_regular", False) or plan_data.get("plan_details") == REGULAR_PLAN_DETAILS_TEXT:
                             del plan_log[date_str]["groups"][group]
                     if not plan_log[date_str]["groups"]:
                         del plan_log[date_str]
@@ -140,7 +142,17 @@ def generate_monthly_schedule(year: int, month: int, overwrite: bool = False) ->
                 (datetime.datetime.fromisoformat(p["end_date"]).date() + datetime.timedelta(days=7 if p["is_test_period"] else 0))
                 for p in off_periods
             )
-            if is_off: continue
+            
+            # 休止期間の場合、既存の定期活動を削除
+            if is_off:
+                if date_str in plan_log:
+                    for group, plan_data in list(plan_log[date_str]["groups"].items()):
+                        # 定期活動フラグがある、または備考が定期活動の定型文と一致する場合に削除
+                        if plan_data.get("is_regular", False) or plan_data.get("plan_details") == REGULAR_PLAN_DETAILS_TEXT:
+                            del plan_log[date_str]["groups"][group]
+                    if not plan_log[date_str]["groups"]:
+                        del plan_log[date_str]
+                continue
 
             day_plans = [p for p in regular_plans if p["weekday"] == current_date.weekday()]
             if not day_plans: continue
@@ -149,15 +161,19 @@ def generate_monthly_schedule(year: int, month: int, overwrite: bool = False) ->
 
             for plan in day_plans:
                 group_name = plan["group"]
-                if group_name in plan_log[date_str]["groups"] and not plan_log[date_str]["groups"][group_name].get("is_regular", False):
-                    continue
+                # 優先スキップ処理: 既に手動の予定があれば、定期活動を追加しない
+                # 手動の予定 = is_regularがFalse かつ 備考が定型文でない
+                if group_name in plan_log[date_str]["groups"]:
+                    existing_plan = plan_log[date_str]["groups"][group_name]
+                    if not existing_plan.get("is_regular", False) and existing_plan.get("plan_details") != REGULAR_PLAN_DETAILS_TEXT:
+                        continue
                 
                 plan_log[date_str]["groups"][group_name] = {
                     "id": str(uuid.uuid4()),
                     "start_time": plan["start_time"],
                     "end_time": plan["end_time"],
                     "location": plan["location"],
-                    "plan_details": "定期活動",
+                    "plan_details": REGULAR_PLAN_DETAILS_TEXT,
                     "is_regular": True
                 }
 

@@ -8,7 +8,7 @@ import datetime
 import openpyxl
 
 # 共通関数と定数をutilsからインポート
-from .utils import get_wareki, get_excel_filename_for_month
+from .utils import get_wareki, get_excel_filename_for_month, JST
 
 class ExcelHandlerCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -21,7 +21,7 @@ class ExcelHandlerCog(commands.Cog):
     async def export_excel(self, interaction: discord.Interaction, year: int = None, month: int = None, as_zip: bool = True):
         try:
             await interaction.response.defer(ephemeral=False, thinking=True)
-            today = datetime.date.today()
+            today = datetime.datetime.now(JST).date()
             target_year = year if year is not None else today.year
             target_month = month if month is not None else today.month
             target_filename = get_excel_filename_for_month(target_year, target_month)
