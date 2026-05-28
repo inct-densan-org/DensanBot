@@ -8,8 +8,8 @@ from openpyxl.utils.exceptions import InvalidFileException
 import os
 
 from .utils import (
-    load_json, save_json, get_excel_filename_for_month, parse_time,
-    REPORT_LOG_FILE, ZEN_TO_HAN, get_group_options, get_location_options, JST
+    load_json, save_json, get_excel_filename_for_month, parse_time, parse_date,
+    REPORT_LOG_FILE, ZEN_TO_HAN, get_group_options, get_location_options, JST, PLAN_LOG_FILE_NAME
 )
 from .ui_components import ReportModal, ReminderView, get_todays_plan_defaults
 
@@ -22,7 +22,7 @@ class ReportCog(commands.Cog):
 
     report = app_commands.Group(name="report", description="活動報告に関するコマンド")
 
-    @report.command(name="open", description="活動報告モーダルを開きます。")
+    @report.command(name="open", description="活動報告モーダルを開きます（予定外活動・過去日修正にも使用可）。")
     @app_commands.choices(
         group=[app_commands.Choice(name=opt, value=opt) for opt in get_group_options()],
         location=[app_commands.Choice(name=opt, value=opt) for opt in get_location_options()]
@@ -34,17 +34,38 @@ class ReportCog(commands.Cog):
                 cog=self, 
                 group=group.value,
                 location=location.value,
-                default_activity_time=defaults.get("activity_time")
+                default_activity_time=defaults.get("activity_time"),
+                default_activity_date=defaults.get("activity_date")
             )
         )
+
+    @report.command(name="post_guide", description="このチャンネルに使い方ガイドと報告ボタンを投稿します（pin可）。")
+    @app_commands.default_permissions(administrator=True)
+    async def post_guide(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="📘 DensanBot 使い方ガイド",
+            description="以下のボタンから**コマンド不要で活動報告**できます。必要に応じてこのメッセージをピン留めしてください。",
+            color=discord.Color.blurple()
+        )
+        embed.add_field(name="通常報告", value="「活動報告を行う」→ グループ/場所選択 → モーダル送信", inline=False)
+        embed.add_field(name="活動なし報告", value="「今日は活動なしを報告」→ 対象グループを選択", inline=False)
+        embed.add_field(name="主なコマンド", value="`/plan add` ` /plan list` ` /history report` ` /history unreported`", inline=False)
+        view = ReminderView(self)
+        await interaction.channel.send(embed=embed, view=view)
+        await interaction.response.send_message("✅ ガイドを投稿しました。必要ならピン留めしてください。", ephemeral=True)
 
     async def handle_report_submission(self, interaction: discord.Interaction, modal: ReportModal):
         try:
             await interaction.response.defer(ephemeral=True, thinking=True)
-            today = datetime.datetime.now(JST).date()
-            target_excel_file = get_excel_filename_for_month(today.year, today.month)
+            report_date_str = parse_date(modal.activity_date.value)
+            if not report_date_str:
+                await interaction.followup.send("エラー: 活動日の形式が正しくありません。(例: 2026-05-28 or 20260528)", ephemeral=True)
+                return
+            report_date = datetime.date.fromisoformat(report_date_str)
+
+            target_excel_file = get_excel_filename_for_month(report_date.year, report_date.month)
             if not os.path.exists(target_excel_file):
-                await interaction.followup.send(f"エラー: 今月({today.year}年{today.month}月)のExcelファイルが存在しません。`/plan add`で計画を立てると自動で作成されます。", ephemeral=True)
+                await interaction.followup.send(f"エラー: {report_date.year}年{report_date.month}月のExcelファイルが存在しません。`/schedule generate_sheet` で作成してください。", ephemeral=True)
                 return
 
             raw_time = modal.activity_time.value.translate(ZEN_TO_HAN)
@@ -62,15 +83,14 @@ class ReportCog(commands.Cog):
             location_name = modal.location.value
 
             report_log = load_json(REPORT_LOG_FILE)
-            today_str = today.isoformat()
-            if today_str not in report_log: report_log[today_str] = {"groups": {}}
-            report_log[today_str]["groups"][group_name] = {
+            if report_date_str not in report_log: report_log[report_date_str] = {"groups": {}}
+            report_log[report_date_str]["groups"][group_name] = {
                 "start_time": start_time, "end_time": end_time, "location": location_name, 
                 "participants": participants_num, "description": modal.description.value, "reporter": interaction.user.display_name,
             }
             save_json(REPORT_LOG_FILE, report_log)
             
-            todays_reports = report_log[today_str]["groups"]
+            todays_reports = report_log[report_date_str]["groups"]
             final_start = min((v["start_time"] for v in todays_reports.values() if v["start_time"]), default="")
             final_end = max((v["end_time"] for v in todays_reports.values() if v["end_time"]), default="")
             total_participants = sum(v["participants"] for v in todays_reports.values())
@@ -82,12 +102,12 @@ class ReportCog(commands.Cog):
             try:
                 workbook = openpyxl.load_workbook(target_excel_file)
                 sheet = workbook["活動報告書"]
-                target_row = today.day + 6
+                target_row = report_date.day + 6
                 sheet[f"C{target_row}"] = final_start; sheet[f"E{target_row}"] = final_end
                 sheet[f"F{target_row}"] = final_loc; sheet[f"G{target_row}"] = total_participants if total_participants > 0 else None
                 sheet[f"I{target_row}"] = final_desc
                 workbook.save(target_excel_file)
-                await interaction.followup.send("活動報告、お疲れ様でした！Excelファイルに記録しました。", ephemeral=True)
+                await interaction.followup.send(f"✅ {report_date_str} の活動報告を記録しました（予定外活動も登録可能）。", ephemeral=True)
             except (FileNotFoundError, InvalidFileException, KeyError) as e:
                 await interaction.followup.send(f"Excelエラー: {e}", ephemeral=True)
                 return
@@ -103,6 +123,19 @@ class ReportCog(commands.Cog):
         except Exception as e:
             print(f"An error occurred in handle_report_submission: {e}")
             await interaction.followup.send(f"申し訳ありません、エラーが発生しました。\n`{e}`", ephemeral=True)
+
+    async def report_no_activity(self, interaction: discord.Interaction, group_name: str):
+        today_str = datetime.datetime.now(JST).date().isoformat()
+        plan_log = load_json(PLAN_LOG_FILE_NAME)
+        planned_location = plan_log.get(today_str, {}).get("groups", {}).get(group_name, {}).get("location", "未設定")
+        report_log = load_json(REPORT_LOG_FILE)
+        report_log.setdefault(today_str, {"groups": {}})
+        report_log[today_str]["groups"][group_name] = {
+            "start_time": None, "end_time": None, "location": planned_location,
+            "participants": 0, "description": "活動なし", "reporter": interaction.user.display_name,
+        }
+        save_json(REPORT_LOG_FILE, report_log)
+        await interaction.response.send_message(f"✅ {today_str} の {group_name} を「活動なし」で記録しました。", ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ReportCog(bot))

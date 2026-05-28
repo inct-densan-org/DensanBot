@@ -6,15 +6,33 @@ import os
 import datetime
 from typing import List, Dict
 
-from .ui_components import PagedItemView, ConfirmView
+from .ui_components import PagedItemView, ConfirmView, ReportModal
 from .utils import (
     load_json, save_json, REPORT_LOG_FILE, PLAN_LOG_FILE_NAME, WEEKDAYS
 )
 
 class ReportDetailView(discord.ui.View):
-    def __init__(self, report: dict):
+    def __init__(self, report: dict, bot: commands.Bot):
         super().__init__(timeout=60)
         self.report = report
+        self.bot = bot
+
+    @discord.ui.button(label="編集", style=discord.ButtonStyle.primary)
+    async def edit_report(self, interaction: discord.Interaction, button: discord.ui.Button):
+        report_cog = self.bot.get_cog("ReportCog")
+        if not report_cog:
+            await interaction.response.send_message("エラー: ReportCogが見つかりません。", ephemeral=True)
+            return
+        modal = ReportModal(
+            cog=report_cog,
+            group=self.report["group"],
+            location=self.report.get("location", "その他"),
+            default_activity_time=f"{self.report.get('start_time') or ''} - {self.report.get('end_time') or ''}".strip(" -"),
+            default_activity_date=self.report["date"]
+        )
+        modal.participants.default = str(self.report.get("participants", 0))
+        modal.description.default = self.report.get("description", "")
+        await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="削除", style=discord.ButtonStyle.danger)
     async def delete_report(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -151,7 +169,7 @@ class HistoryViewerCog(commands.Cog):
                     embed.add_field(name="内容", value=selected_report["description"], inline=False)
                 embed.set_footer(text=f"報告者: {selected_report.get('reporter', '不明')}")
 
-                view = ReportDetailView(selected_report)
+                view = ReportDetailView(selected_report, self.bot)
                 await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
             else:
                 await interaction.response.send_message("エラー: 選択された報告が見つかりませんでした。", ephemeral=True)
