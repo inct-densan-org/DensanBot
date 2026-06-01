@@ -80,11 +80,13 @@ class ScheduleManagerCog(commands.Cog):
         self.daily_schedule_notifier.start()
         self.reminder_task.start()
         self.annual_reminder.start()
+        self.unreported_reminder.start()
 
     def cog_unload(self):
         self.daily_schedule_notifier.cancel()
         self.reminder_task.cancel()
         self.annual_reminder.cancel()
+        self.unreported_reminder.cancel()
 
     schedule = app_commands.Group(name="schedule", description="スケジュール関連の全コマンド")
     regular = app_commands.Group(name="regular", parent=schedule, description="定期活動の管理")
@@ -279,7 +281,9 @@ class ScheduleManagerCog(commands.Cog):
         for group, plan in sorted(todays_plans.items()):
             embed.add_field(name=f"【{group}】 {plan.get('start_time', '?')} - {plan.get('end_time', '?')}", value=f"**場所:** {plan.get('location', '?')}\n**予定:** {plan.get('plan_details', '特になし')}", inline=False)
         embed.set_footer(text="活動計画は /plan list コマンドで編集・削除できます。")
-        await channel.send(embed=embed)
+        report_cog = self.bot.get_cog("ReportCog")
+        view = ReminderView(report_cog) if report_cog else None
+        await channel.send(embed=embed, view=view)
 
     @tasks.loop(minutes=1)
     async def reminder_task(self):
@@ -311,9 +315,34 @@ class ScheduleManagerCog(commands.Cog):
             if (channel_id := PLAN_NOTICE_CHANNEL_ID) != 0 and (channel := self.bot.get_channel(channel_id)):
                 await channel.send("新年度です！今年度の長期休業やテスト期間を `/schedule off-period add` コマンドで登録してください。")
 
+    @tasks.loop(time=datetime.time(hour=20, minute=0, tzinfo=JST))
+    async def unreported_reminder(self):
+        if PLAN_NOTICE_CHANNEL_ID == 0 or not (channel := self.bot.get_channel(PLAN_NOTICE_CHANNEL_ID)):
+            return
+        yesterday = (datetime.datetime.now(JST).date() - datetime.timedelta(days=1)).isoformat()
+        plan_log = load_json(PLAN_LOG_FILE_NAME)
+        report_log = load_json("bot_activity_log.json")
+        planned_groups = plan_log.get(yesterday, {}).get("groups", {})
+        if not planned_groups:
+            return
+        missing = [g for g in planned_groups.keys() if g not in report_log.get(yesterday, {}).get("groups", {})]
+        if not missing:
+            return
+        embed = discord.Embed(
+            title=f"⚠ 未報告リマインド ({yesterday})",
+            description="活動計画があるのに報告が未提出のグループがあります。",
+            color=discord.Color.orange()
+        )
+        embed.add_field(name="未報告グループ", value="\n".join(f"・{g}" for g in missing), inline=False)
+        embed.set_footer(text="ボタンから報告、または活動なし報告を実行してください。")
+        report_cog = self.bot.get_cog("ReportCog")
+        view = ReminderView(report_cog) if report_cog else None
+        await channel.send(embed=embed, view=view)
+
     @daily_schedule_notifier.before_loop
     @reminder_task.before_loop
     @annual_reminder.before_loop
+    @unreported_reminder.before_loop
     async def before_tasks(self):
         await self.bot.wait_until_ready()
 
