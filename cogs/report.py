@@ -13,6 +13,7 @@ from .utils import (
 )
 from .ui_components import ReportModal, ReportTargetModal, ReminderView, get_todays_plan_defaults
 
+
 REPORT_NOTICE_CHANNEL_ID = int(os.getenv("REPORT_NOTICE_CHANNEL_ID", 0))
 
 class ReportCog(commands.Cog):
@@ -55,6 +56,57 @@ class ReportCog(commands.Cog):
         view = ReminderView(self)
         await interaction.channel.send(embed=embed, view=view)
         await interaction.response.send_message("✅ ガイドを投稿しました。必要ならピン留めしてください。", ephemeral=True)
+
+
+    async def update_report_source_message(self, source_message: discord.Message | None, *, group_name: str, date_str: str, status: str, reporter_name: str, details: str | None = None):
+        """リマインド/ガイド元メッセージを報告済み状態に更新する。"""
+        if not source_message:
+            return
+        try:
+            embed = source_message.embeds[0].copy() if source_message.embeds else discord.Embed(title="活動報告ステータス")
+            status_label = "✅ 報告済み" if status == "reported" else "☑ 活動なし"
+            embed.color = discord.Color.green() if status == "reported" else discord.Color.light_grey()
+            embed.add_field(
+                name=f"{status_label}: {group_name}",
+                value=f"対象日: {date_str}\n担当: {reporter_name}" + (f"\n{details}" if details else ""),
+                inline=False,
+            )
+            embed.set_footer(text="このメッセージは報告結果にあわせて更新されました。")
+            await source_message.edit(embed=embed)
+        except (discord.HTTPException, discord.NotFound, discord.Forbidden) as e:
+            print(f"Failed to update report source message: {e}")
+
+    async def send_report_notice(self, interaction: discord.Interaction, *, group_name: str, date_str: str, status: str, reporter_name: str, start_time: str | None = None, end_time: str | None = None, location_name: str | None = None, participants_num: int | None = None, description_value: str | None = None):
+        """活動報告/活動なしの通知をREPORT_NOTICE_CHANNEL_IDへ送信する。"""
+        if REPORT_NOTICE_CHANNEL_ID == 0 or not interaction.guild:
+            return
+        notice_channel = interaction.guild.get_channel(REPORT_NOTICE_CHANNEL_ID)
+        if not notice_channel:
+            return
+
+        if status == "no_activity":
+            embed = discord.Embed(
+                title=f"☑ 活動なし報告がありました ({group_name})",
+                color=discord.Color.light_grey(),
+                timestamp=datetime.datetime.now(),
+            )
+            embed.add_field(name="対象日", value=date_str, inline=True)
+            embed.add_field(name="活動場所", value=location_name or "未設定", inline=True)
+        else:
+            embed = discord.Embed(
+                title=f"📝 活動報告がありました ({group_name})",
+                color=discord.Color.green(),
+                timestamp=datetime.datetime.now(),
+            )
+            embed.add_field(name="対象日", value=date_str, inline=True)
+            embed.add_field(name="活動時間", value=f"{start_time} - {end_time}", inline=False)
+            embed.add_field(name="活動場所", value=location_name or "未設定", inline=True)
+            embed.add_field(name="活動人数", value=f"{participants_num or 0}人", inline=True)
+            if description_value:
+                embed.add_field(name="活動内容・備考", value=description_value, inline=False)
+
+        embed.set_footer(text=f"報告者: {reporter_name}", icon_url=interaction.user.display_avatar.url)
+        await notice_channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none(), silent=True)
 
     async def handle_report_submission(self, interaction: discord.Interaction, modal: ReportModal):
         try:
@@ -111,34 +163,60 @@ class ReportCog(commands.Cog):
                 sheet[f"I{target_row}"] = final_desc
                 workbook.save(target_excel_file)
                 await interaction.followup.send(f"✅ {report_date_str} の活動報告を記録しました（予定外活動も登録可能）。", ephemeral=True)
+                await self.update_report_source_message(
+                    getattr(modal, "source_message", None),
+                    group_name=group_name,
+                    date_str=report_date_str,
+                    status="reported",
+                    reporter_name=interaction.user.display_name,
+                    details=f"人数: {participants_num}人 / 場所: {location_name}",
+                )
+                await self.send_report_notice(
+                    interaction,
+                    group_name=group_name,
+                    date_str=report_date_str,
+                    status="reported",
+                    reporter_name=interaction.user.display_name,
+                    start_time=start_time,
+                    end_time=end_time,
+                    location_name=location_name,
+                    participants_num=participants_num,
+                    description_value=description_value,
+                )
             except (FileNotFoundError, InvalidFileException, KeyError) as e:
                 await interaction.followup.send(f"Excelエラー: {e}", ephemeral=True)
                 return
-
-            if REPORT_NOTICE_CHANNEL_ID != 0 and (notice_channel := interaction.guild.get_channel(REPORT_NOTICE_CHANNEL_ID)):
-                embed = discord.Embed(title=f"📝 活動報告がありました ({group_name})", color=discord.Color.green(), timestamp=datetime.datetime.now())
-                embed.add_field(name="活動時間", value=f"{start_time} - {end_time}", inline=False)
-                embed.add_field(name="活動場所", value=location_name, inline=True)
-                embed.add_field(name="活動人数", value=f"{participants_num}人", inline=True)
-                if description_value: embed.add_field(name="活動内容・備考", value=description_value, inline=False)
-                embed.set_footer(text=f"報告者: {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
-                await notice_channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none(), silent=True)
         except Exception as e:
             print(f"An error occurred in handle_report_submission: {e}")
             await interaction.followup.send(f"申し訳ありません、エラーが発生しました。\n`{e}`", ephemeral=True)
 
-    async def report_no_activity(self, interaction: discord.Interaction, group_name: str):
-        today_str = datetime.datetime.now(JST).date().isoformat()
+    async def report_no_activity(self, interaction: discord.Interaction, group_name: str, report_date_str: str | None = None, source_message: discord.Message | None = None):
+        target_date_str = report_date_str or datetime.datetime.now(JST).date().isoformat()
         plan_log = load_json(PLAN_LOG_FILE_NAME)
-        planned_location = plan_log.get(today_str, {}).get("groups", {}).get(group_name, {}).get("location", "未設定")
+        planned_location = plan_log.get(target_date_str, {}).get("groups", {}).get(group_name, {}).get("location", "未設定")
         report_log = load_json(REPORT_LOG_FILE)
-        report_log.setdefault(today_str, {"groups": {}})
-        report_log[today_str]["groups"][group_name] = {
+        report_log.setdefault(target_date_str, {"groups": {}})
+        report_log[target_date_str]["groups"][group_name] = {
             "start_time": None, "end_time": None, "location": planned_location,
             "participants": 0, "description": "活動なし", "reporter": interaction.user.display_name,
         }
         save_json(REPORT_LOG_FILE, report_log)
-        await interaction.response.send_message(f"✅ {today_str} の {group_name} を「活動なし」で記録しました。", ephemeral=True)
+        await self.update_report_source_message(
+            source_message,
+            group_name=group_name,
+            date_str=target_date_str,
+            status="no_activity",
+            reporter_name=interaction.user.display_name,
+        )
+        await self.send_report_notice(
+            interaction,
+            group_name=group_name,
+            date_str=target_date_str,
+            status="no_activity",
+            reporter_name=interaction.user.display_name,
+            location_name=planned_location,
+        )
+        await interaction.response.send_message(f"✅ {target_date_str} の {group_name} を「活動なし」で記録しました。", ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ReportCog(bot))

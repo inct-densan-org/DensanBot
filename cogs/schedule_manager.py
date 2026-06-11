@@ -117,7 +117,9 @@ class ScheduleManagerCog(commands.Cog):
             return
 
         embed = discord.Embed(title=f"💡【{group}】活動終了時刻が近づいています", description=f"活動報告の準備をお願いします。", color=discord.Color.gold())
-        view = ReminderView(report_cog)
+        today_str = datetime.datetime.now(JST).date().isoformat()
+        plan = load_json(PLAN_LOG_FILE_NAME).get(today_str, {}).get("groups", {}).get(group, {})
+        view = ReminderView(report_cog, group=group, date_str=today_str, plan=plan)
         
         await interaction.channel.send(embed=embed, view=view)
         await interaction.response.send_message("リマインドメッセージを送信しました。", ephemeral=True)
@@ -303,7 +305,7 @@ class ScheduleManagerCog(commands.Cog):
                     report_cog = self.bot.get_cog("ReportCog")
                     if report_cog:
                         embed = discord.Embed(title=f"💡【{group_name}】活動終了時刻が近づいています", description=f"終了時刻: **{end_time_str}**\n活動報告の準備をお願いします。", color=discord.Color.gold())
-                        await channel.send(embed=embed, view=ReminderView(report_cog))
+                        await channel.send(embed=embed, view=ReminderView(report_cog, group=group_name, date_str=today_str, plan=plan))
                         self.reminders_sent_today.add(group_name)
                         print(f"Sent reminder to {group_name} in channel {channel_id}")
         except Exception as e: print(f"An error occurred in reminder_task: {e}")
@@ -328,16 +330,20 @@ class ScheduleManagerCog(commands.Cog):
         missing = [g for g in planned_groups.keys() if g not in report_log.get(yesterday, {}).get("groups", {})]
         if not missing:
             return
-        embed = discord.Embed(
-            title=f"⚠ 未報告リマインド ({yesterday})",
-            description="活動計画があるのに報告が未提出のグループがあります。",
-            color=discord.Color.orange()
-        )
-        embed.add_field(name="未報告グループ", value="\n".join(f"・{g}" for g in missing), inline=False)
-        embed.set_footer(text="ボタンから報告、または活動なし報告を実行してください。")
         report_cog = self.bot.get_cog("ReportCog")
-        view = ReminderView(report_cog) if report_cog else None
-        await channel.send(embed=embed, view=view)
+        for group_name in missing:
+            plan = planned_groups.get(group_name, {})
+            embed = discord.Embed(
+                title=f"⚠【{group_name}】未報告リマインド ({yesterday})",
+                description="この活動計画はまだ報告されていません。ボタンから報告、または活動なし報告を実行してください。",
+                color=discord.Color.orange()
+            )
+            embed.add_field(name="予定時間", value=f"{plan.get('start_time', '?')} - {plan.get('end_time', '?')}", inline=False)
+            embed.add_field(name="予定場所", value=plan.get("location", "未設定"), inline=True)
+            if plan.get("plan_details"):
+                embed.add_field(name="予定内容", value=plan["plan_details"], inline=False)
+            view = ReminderView(report_cog, group=group_name, date_str=yesterday, plan=plan) if report_cog else None
+            await channel.send(embed=embed, view=view)
 
     @daily_schedule_notifier.before_loop
     @reminder_task.before_loop
