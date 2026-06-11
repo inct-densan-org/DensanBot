@@ -4,7 +4,6 @@ import datetime
 
 from .utils import get_group_options, get_location_options, PLAN_LOG_FILE_NAME, load_json
 
-<<<<<<< HEAD
 def get_plan_defaults(group_name: str, date_str: str | None = None) -> Dict[str, Any]:
     """活動計画ログを読み込み、指定日・グループのデフォルト値を取得する。"""
     target_date = date_str or datetime.date.today().isoformat()
@@ -15,17 +14,6 @@ def get_plan_defaults(group_name: str, date_str: str | None = None) -> Dict[str,
         if start and end:
             defaults["activity_time"] = f"{start} - {end}"
         defaults["location"] = target_plan.get("location")
-=======
-def get_todays_plan_defaults(group_name: str) -> Dict[str, Any]:
-    """今日の活動計画ログを読み込み、指定されたグループのデフォルト値を取得する"""
-    today_str = datetime.date.today().isoformat()
-    defaults = {"activity_time": None, "location": None, "activity_date": today_str}
-    plan_log = load_json(PLAN_LOG_FILE_NAME)
-    if todays_plan := plan_log.get(today_str, {}).get("groups", {}).get(group_name):
-        start, end = todays_plan.get("start_time"), todays_plan.get("end_time")
-        if start and end: defaults["activity_time"] = f"{start} - {end}"
-        defaults["location"] = todays_plan.get("location")
->>>>>>> main
     return defaults
 
 def get_todays_plan_defaults(group_name: str) -> Dict[str, Any]:
@@ -188,19 +176,12 @@ class ReportModal(ActivityBaseModal, title="活動報告"):
     participants = discord.ui.TextInput(label="活動人数", placeholder="半角数字で入力してください")
     description = discord.ui.TextInput(label="活動内容・備考", style=discord.TextStyle.paragraph, required=False)
 
-<<<<<<< HEAD
     def __init__(self, cog, group: str, location: str, default_activity_time: str | None = None, default_activity_date: str | None = None, source_message: discord.Message | None = None):
-=======
-    def __init__(self, cog, group: str, location: str, default_activity_time: str | None = None, default_activity_date: str | None = None):
->>>>>>> main
         super().__init__()
         self.cog = cog
         self.group = group
         self.location = location
-<<<<<<< HEAD
         self.source_message = source_message
-=======
->>>>>>> main
         self.activity_date.default = default_activity_date or datetime.datetime.now().date().isoformat()
         if default_activity_time:
             self.activity_time.default = default_activity_time
@@ -215,18 +196,11 @@ class ReportTargetModal(ActivityBaseModal, title="活動報告（場所も入力
     participants = discord.ui.TextInput(label="活動人数", placeholder="半角数字で入力してください")
     description = discord.ui.TextInput(label="活動内容・備考", style=discord.TextStyle.paragraph, required=False)
 
-<<<<<<< HEAD
     def __init__(self, cog, group: str, location: str, default_activity_time: str | None = None, default_activity_date: str | None = None, source_message: discord.Message | None = None):
         super().__init__()
         self.cog = cog
         self.group = group
         self.source_message = source_message
-=======
-    def __init__(self, cog, group: str, location: str, default_activity_time: str | None = None, default_activity_date: str | None = None):
-        super().__init__()
-        self.cog = cog
-        self.group = group
->>>>>>> main
         self.location.default = "" if location == "その他" else location
         if location == "その他":
             self.location.placeholder = "活動場所を入力してください"
@@ -266,11 +240,7 @@ class GroupSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         self.parent_view.selected_group = self.values[0]
-<<<<<<< HEAD
         defaults = get_plan_defaults(self.parent_view.selected_group, self.parent_view.date_str)
-=======
-        defaults = get_todays_plan_defaults(self.parent_view.selected_group)
->>>>>>> main
         if self.parent_view.selected_group != "その他" and defaults.get("location"):
             await interaction.response.send_modal(
                 ReportModal(
@@ -279,10 +249,7 @@ class GroupSelect(discord.ui.Select):
                     location=defaults["location"],
                     default_activity_time=defaults.get("activity_time"),
                     default_activity_date=defaults.get("activity_date"),
-<<<<<<< HEAD
                     source_message=self.parent_view.source_message,
-=======
->>>>>>> main
                 )
             )
             return
@@ -297,11 +264,7 @@ class LocationSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         selected_location = self.values[0]
-<<<<<<< HEAD
         defaults = get_plan_defaults(self.parent_view.selected_group, self.parent_view.date_str)
-=======
-        defaults = get_todays_plan_defaults(self.parent_view.selected_group)
->>>>>>> main
         modal_class = ReportTargetModal if selected_location == "その他" else ReportModal
         modal = modal_class(
             cog=self.parent_view.cog,
@@ -309,10 +272,7 @@ class LocationSelect(discord.ui.Select):
             location=selected_location,
             default_activity_time=defaults.get("activity_time"),
             default_activity_date=defaults.get("activity_date"),
-<<<<<<< HEAD
             source_message=self.parent_view.source_message,
-=======
->>>>>>> main
         )
         await interaction.response.send_modal(modal)
 
@@ -350,7 +310,6 @@ class ReminderView(discord.ui.View):
             description="まず、報告するグループを選択してください。",
             color=discord.Color.blue()
         )
-<<<<<<< HEAD
         await interaction.response.send_message(
             embed=embed,
             view=ReportCreationView(cog=self.cog, date_str=self.date_str, source_message=interaction.message),
@@ -375,25 +334,10 @@ class ReminderView(discord.ui.View):
             return
         options = [discord.SelectOption(label=g, value=g) for g in groups[:25]]
         view = NoActivitySelectView(self.cog, options, self.date_str, interaction.message)
-=======
-        await interaction.response.send_message(embed=embed, view=ReportCreationView(cog=self.cog), ephemeral=True)
-
-    @discord.ui.button(label="今日は活動なしを報告", style=discord.ButtonStyle.secondary, custom_id="report_no_activity_button")
-    async def report_no_activity(self, interaction: discord.Interaction, button: discord.ui.Button):
-        today_str = datetime.date.today().isoformat()
-        plan_log = load_json(PLAN_LOG_FILE_NAME)
-        todays_groups = sorted(plan_log.get(today_str, {}).get("groups", {}).keys())
-        if not todays_groups:
-            await interaction.response.send_message("本日の活動計画がないため、活動なし報告の対象がありません。", ephemeral=True)
-            return
-        options = [discord.SelectOption(label=g, value=g) for g in todays_groups[:25]]
-        view = NoActivitySelectView(self.cog, options)
->>>>>>> main
         await interaction.response.send_message("活動なしとして記録するグループを選択してください。", view=view, ephemeral=True)
 
 
 class NoActivitySelect(discord.ui.Select):
-<<<<<<< HEAD
     def __init__(self, cog, options: List[discord.SelectOption], date_str: str, source_message: discord.Message | None = None):
         self.cog = cog
         self.date_str = date_str
@@ -413,17 +357,3 @@ class NoActivitySelectView(discord.ui.View):
     def __init__(self, cog, options: List[discord.SelectOption], date_str: str, source_message: discord.Message | None = None):
         super().__init__(timeout=120)
         self.add_item(NoActivitySelect(cog, options, date_str, source_message))
-=======
-    def __init__(self, cog, options: List[discord.SelectOption]):
-        self.cog = cog
-        super().__init__(placeholder="活動なしとして記録するグループを選択", options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        await self.cog.report_no_activity(interaction, self.values[0])
-
-
-class NoActivitySelectView(discord.ui.View):
-    def __init__(self, cog, options: List[discord.SelectOption]):
-        super().__init__(timeout=120)
-        self.add_item(NoActivitySelect(cog, options))
->>>>>>> main
