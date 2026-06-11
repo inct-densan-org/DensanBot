@@ -12,9 +12,9 @@ from .utils import (
     PLAN_LOG_FILE_NAME, get_group_options, get_location_options, WEEKDAYS, ZEN_TO_HAN,
     generate_monthly_schedule, group_autocomplete, JST
 )
-from .ui_components import PagedItemView, ConfirmView
+from .ui_components import PagedItemView, ConfirmView, ActivityBaseModal
 
-class PlanModal(discord.ui.Modal, title="活動計画の入力"):
+class PlanModal(ActivityBaseModal, title="活動計画の入力"):
     group = discord.ui.TextInput(label="グループ")
     location = discord.ui.TextInput(label="活動場所")
     activity_date = discord.ui.TextInput(label="活動日 (YYYY-MM-DD or YYYYMMDD)", placeholder="例: 2025-09-20")
@@ -26,12 +26,7 @@ class PlanModal(discord.ui.Modal, title="活動計画の入力"):
         self.cog = cog
         self.plan_id = plan_id or str(uuid.uuid4())
         
-        self.group.default = group
-        self.location.default = location
-        if group == "その他":
-            self.group.placeholder = "活動するグループ名を入力してください"
-        if location == "その他":
-            self.location.placeholder = "活動する場所を入力してください"
+        self.setup_common_defaults(self.group, self.location, group, location)
 
         if defaults:
             self.activity_date.default = defaults.get("date")
@@ -94,7 +89,7 @@ class PlanCog(commands.Cog):
 
     plan = app_commands.Group(name="plan", description="活動計画に関するコマンド")
 
-    @plan.command(name="add", description="活動計画を入力します。")
+    @plan.command(name="add", description="活動計画を入力します。日付・時間・内容をモーダルで登録します。")
     @app_commands.choices(
         group=[app_commands.Choice(name=opt, value=opt) for opt in get_group_options()],
         location=[app_commands.Choice(name=opt, value=opt) for opt in get_location_options()]
@@ -102,7 +97,7 @@ class PlanCog(commands.Cog):
     async def add_plan(self, interaction: discord.Interaction, group: app_commands.Choice[str], location: app_commands.Choice[str]):
         await interaction.response.send_modal(PlanModal(cog=self, group=group.value, location=location.value))
 
-    @plan.command(name="list", description="今後の活動計画を一覧表示・編集・削除します。")
+    @plan.command(name="list", description="今後の活動計画を一覧表示し、選択した項目を編集/削除できます。")
     @app_commands.describe(group="表示するグループを絞り込みます。")
     @app_commands.autocomplete(group=group_autocomplete)
     async def list_plans(self, interaction: discord.Interaction, group: Optional[str] = None):

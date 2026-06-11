@@ -21,7 +21,7 @@ class AdminCog(commands.Cog):
         failed_cogs = []
 
         # main.pyで定義されている除外リストを再現
-        exclude_files = ["ui_components.py", "utils.py", "schedule.py"]
+        exclude_files = ["ui_components.py", "utils.py"]
         
         # cogsディレクトリ内のすべての拡張機能を取得
         for filename in os.listdir("./cogs"):

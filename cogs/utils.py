@@ -143,7 +143,7 @@ def generate_monthly_schedule(year: int, month: int, overwrite: bool = False) ->
                 for p in off_periods
             )
             
-            # 休止期間の場合、既存の定期活動を削除
+            # 休止期間の場合、既存の定期活動のみ削除（手動計画は保持）
             if is_off:
                 if date_str in plan_log:
                     for group, plan_data in list(plan_log[date_str]["groups"].items()):
@@ -152,9 +152,11 @@ def generate_monthly_schedule(year: int, month: int, overwrite: bool = False) ->
                             del plan_log[date_str]["groups"][group]
                     if not plan_log[date_str]["groups"]:
                         del plan_log[date_str]
-                continue
+                # 休止期間中は定期活動の新規追加を行わない
+                day_plans = []
+            else:
+                day_plans = [p for p in regular_plans if p["weekday"] == current_date.weekday()]
 
-            day_plans = [p for p in regular_plans if p["weekday"] == current_date.weekday()]
             if not day_plans: continue
 
             if date_str not in plan_log: plan_log[date_str] = {"groups": {}}
@@ -192,8 +194,10 @@ def generate_monthly_schedule(year: int, month: int, overwrite: bool = False) ->
 
             if date_str in plan_log and plan_log[date_str]["groups"]:
                 todays_plans = plan_log[date_str]["groups"]
-                final_start = min(v["start_time"] for v in todays_plans.values() if v.get("start_time"))
-                final_end = max(v["end_time"] for v in todays_plans.values() if v.get("end_time"))
+                start_times = [v["start_time"] for v in todays_plans.values() if v.get("start_time")]
+                end_times = [v["end_time"] for v in todays_plans.values() if v.get("end_time")]
+                final_start = min(start_times) if start_times else None
+                final_end = max(end_times) if end_times else None
                 
                 location_parts = [f'{v["location"]}({k})' if k and k != "その他" else v["location"] for k, v in todays_plans.items()]
                 final_location = " | ".join(sorted(list(set(location_parts))))

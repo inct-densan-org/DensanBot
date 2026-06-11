@@ -1,157 +1,85 @@
-# 電算部 活動報告Bot
+# DensanBot
 
-これは、Discordを通じて部活動の活動計画・報告を管理し、Excelファイルに自動で記録するためのBotです。
+Discord 上で「活動計画」と「活動報告」を入力し、学校提出向け Excel 帳票（活動計画書・活動報告書）を自動更新する部活動運用 Bot です。
 
-## 主な機能
+> このリポジトリは **Python 3.11+ / discord.py** を前提にしています。帳票更新ロジックは `openpyxl` を用いて実装されています。
 
-- **活動計画・報告**: `/plan` と `/report` コマンドで、活動の予定と実績を簡単に入力できます。
-- **Excel自動生成・更新**: 月初の計画入力時やコマンド実行時に、テンプレートからその月のExcelファイルを全自動で生成。定期活動や休止期間も反映します。
-- **柔軟な入力**: 日付や時刻の入力は、全角・半角の違いを吸収し、`yyyyMMdd` や `hhmm` 形式のショートハンドにも対応しています。
-- **高度なリマインダー**:
-  - **活動終了リマインダー**: 各グループの活動終了15分前になると、設定されたチャンネルに自動でリマインドメッセージを送信します。
-  - **カスタムリマインダー**: 「ドメイン更新」のような繰り返し可能なタスクを登録・管理・通知できます。
-- **履歴の閲覧と操作**: Discord上で過去の活動報告を確認したり、間違えた報告を安全に削除したりできます。
-- **管理者機能**: Botの設定変更や再起動をDiscordのコマンドから安全に行えます。
+## 概要
+
+- スラッシュコマンド中心で、計画・報告・履歴・リマインダー・設定変更を Discord 上で完結
+- JSON（運用データ）と Excel（提出物）を同期
+- 定期活動・休止期間をルール化して月次計画を半自動生成
+- 日次通知（8:00）・活動終了前通知（15分前）・カスタム通知（9:00）を自動実行
+- 未報告リマインド（20:00）で「計画あり・報告なし」を通知し、ボタンから報告/活動なし登録が可能。報告後は通知チャンネルへ報告メッセージを送信し、元のリマインドメッセージも報告済みに更新
+
+詳細設計は以下を参照してください。
+
+- `docs/ARCHITECTURE.md`
+- `docs/OPERATIONS.md`
+- `docs/ROADMAP.md`
 
 ---
 
-## 導入と設定
+## クイックスタート
 
-### 1. 必要なライブラリのインストール
+1. 依存関係をインストール
 
-このBotを動作させるには、以下のPythonライブラリが必要です。
-
-```sh
-uv add discord.py python-dotenv openpyxl python-dateutil
+```bash
+uv sync
 ```
 
-### 2. Botの招待
+2. `.env` を作成（最低限 `TOKEN`, `PLAN_NOTICE_CHANNEL_ID`, `REPORT_NOTICE_CHANNEL_ID`）
+3. Excel テンプレートを配置（`config.json` の `template_file_name`）
+4. 起動
 
-Discord Developer PortalでBotを作成し、以下の権限を付与した招待URLでサーバーに招待してください。
-
-- `チャンネルを見る (View Channel)`
-- `メッセージを送信 (Send Messages / Send Messages in Threads)`
-- `埋め込みリンク (Embed Links)`
-- `ファイルを添付 (Attach Files)`
-- `メッセージの管理 (Manage Messages)`
-- `メッセージ履歴を読む (Read Message History)`
-- `アプリケーションコマンドの使用 (Use Application Commands)`
-
-**【重要】** Botの「Privileged Gateway Intents」設定で、**「SERVER MEMBERS INTENT」**と**「MESSAGE CONTENT INTENT」**の両方を**ON**にしてください。
-
-### 3. 設定ファイルの準備
-
-Botを初めて起動する前に、ルートディレクトリに `.env` ファイルを作成し、以下の内容を記述します。
-
-```env
-# BotのDiscordトークン (必須)
-TOKEN=YOUR_DISCORD_BOT_TOKEN
-
-# --- 通知チャンネルID (必須) ---
-# 「今日の活動予定」や「カスタムリマインダー」を通知するチャンネル
-PLAN_NOTICE_CHANNEL_ID=YOUR_GENERAL_NOTICE_CHANNEL_ID
-# 活動報告があった際のサイレント通知が投稿されるチャンネル
-REPORT_NOTICE_CHANNEL_ID=YOUR_REPORT_LOG_CHANNEL_ID
-
-# --- グループ別リマインダー (任意) ---
-# グループごとの活動終了リマインダーを送信したいチャンネル
-# グループ名の大文字・記号は `_` に変換して記述 (例: CG･DTM -> CG_DTM_CHANNEL_ID)
-# AI_CHANNEL_ID=...
-# WEB_CHANNEL_ID=...
+```bash
+uv run main.py
 ```
 
-### 4. テンプレートファイルの準備
+---
 
-ルートディレクトリに、活動報告書のテンプレートとなるExcelファイル（`[電子計算機部]R0年xx月_活動計画書・活動報告書・活動延長願（複合書式）.xlsx`）を配置してください。
-**注意:** このファイル名は現在Bot内部で固定されています。変更したい場合はBotのソースコード(`cogs/utils.py`の`get_excel_filename_for_month`関数)を直接編集する必要があります。
+## 主要コマンド一覧（運用者向け）
 
-### 5. Botの起動
+- `/plan add`, `/plan list`: 活動計画の登録・編集・削除
+- `/report open`: 活動報告入力（予定外活動や過去日入力にも対応）
+- `/report post_guide`: 当該チャンネルに使い方ガイドと報告ボタンを投稿（ピン留め推奨）
+- `/history report`, `/history unreported`: 報告履歴の確認・削除 / 未報告計画の処理
+- `/schedule generate_sheet`: 月次計画書生成（定期活動・休止期間を反映）
+- `/schedule regular add/list`: 定期活動ルール管理
+- `/schedule off-period add/list`: 休止期間ルール管理
+- `/remind add/edit/list`: カスタムリマインダー管理
+- `/excel export`: 月次 Excel の出力（zip/xlsx）
+- `/config ...`: 顧問名・代表者名・選択肢管理
+- `/admin reload`, `/admin restart`: Cog 再読込・再起動
 
-uv run main.pyを実行して下さい.
-Network班のサーバーで動かす場合はpm2を導入済みなので, 以下のコマンドでBOTを永続化してください.
-`pm2 start uv --name "bot" -- run main.py`
+全コマンド仕様は `docs/ARCHITECTURE.md` を参照。
 
-## コマンド一覧
+---
 
-### `/plan` - 活動計画の管理
+## リポジトリ構成
 
-- `/plan add`
-  - **説明**: 活動計画を登録します。
-  - **引数**: `group`, `location`
-  - **動作**: モーダルが開き、活動日・時間・詳細を入力します。選択肢にないグループや場所は「その他」を選択することで手動入力が可能です。
-- `/plan list`
-  - **説明**: 今後の活動計画を一覧表示します。
-  - **引数**: `group` (任意) で表示するグループを絞り込めます。
-  - **動作**: 表示された計画に対して「編集」や「削除」を行えます。
+- `main.py`: Bot起動、Cog自動ロード、`tree.sync()`
+- `cogs/`: 機能別Cog（計画・報告・履歴・スケジュール・Excel・設定・管理）
+- `cogs/ui_components.py`: View / Modal / Select など UI 部品
+- `cogs/utils.py`: JSON I/O、日付/時刻パース、月次生成など共通ロジック
+- `docs/`: 設計・運用・将来計画ドキュメント
+- `TEST_SCENARIOS.md`: 手動検証シナリオ
 
-### `/report` - 活動報告の管理
+---
 
-- `/report open`
-  - **説明**: 今日の活動を報告します。
-  - **引数**: `group`, `location`
-  - **動作**: モーダルが開きます。もし今日の活動計画があれば、時間が自動入力されます。報告完了後、指定チャンネルにサイレント通知が送信されます。
+## 運用上の注意（重要）
 
-### `/excel` - Excelファイルの操作
+- `*.json` と `*.xlsx` は `.gitignore` 対象ですが、**実行で生成される運用データ**です。誤削除防止のため定期バックアップ運用を推奨。
+- `config.json` は運用設定（テンプレート、表示名、候補リスト）を保持するため、環境別に管理方針（Git管理するか）を統一してください。
+- `/config` でグループ/場所を変更した場合、Discord 側の choices 反映には `/admin reload` または再起動が必要。
+- `/admin restart` は `start.bat` または `start.sh` が実行可能であることを前提にしています。
 
-- `/excel export [year] [month] [as_zip]`
-  - **説明**: 指定された年月のExcelファイルを出力します。
-  - **引数**:
-    - `year` (任意): 西暦年。省略時は今年。
-    - `month` (任意): 月。省略時は今月。
-    - `as_zip` (任意): `True` (デフォルト)でzip形式、`False`で生ファイル。
-  - **動作**: 出力前にファイル内の日付を更新し、チャンネルに送信します。
+---
 
-### `/history` - 履歴の閲覧と操作
+## 既知課題（2026-05時点）
 
-- `/history report [group] [location] [limit]`
-  - **説明**: 過去の活動報告を検索・表示します。
-  - **引数**: `group`, `location`, `limit` で結果を絞り込めます。
-  - **動作**: ページめくり可能な一覧が表示され、各報告を「削除」ボタンで安全に取り消せます。
+- 履歴画面で報告削除・「活動なし」登録した際に、JSON は更新されるが Excel 側に即時反映されないケースがある。
+- JSON を複数 Cog が直接読み書きするため、同時操作時の競合対策（ロック/トランザクション）がない。
+- `discord.Intents.all()` は現状の Slash 中心運用に対して広め。最小権限化の余地あり。
 
-- `/history unreported`
-  - **説明**: 報告漏れの活動計画を一覧表示します。
-  - **動作**: 表示された各計画を「活動なしとして報告」ボタンで簡単に処理できます。
-
-### `/remind` - カスタムリマインダー
-
-- `/remind add`
-  - **説明**: 「ドメイン更新」のような単発・定期タスクを登録します。
-- `/remind list`
-  - **説明**: 登録済みのタスクを一覧表示し、「編集」「削除」が可能です。
-
-### `/schedule` - スケジュール基盤の設定
-
-- `/schedule generate_sheet`
-  - **説明**: 指定した月の活動計画を生成・更新します。
-  - **引数**: `year`, `month` (省略時は今月), `overwrite` (Trueで強制再生成)
-  - **動作**: 定期活動や休止期間の設定に基づき、ExcelファイルとBotの内部データを同期します。手動で登録された予定は維持されます。
-
-- `/schedule regular add`
-  - **説明**: 「毎週〇曜日は〇〇班」のような定期活動を登録します。
-- `/schedule regular list`
-  - **説明**: 登録済みの定期活動を一覧表示します。
-
-- `/schedule off-period add`
-  - **説明**: 長期休業やテスト期間などの活動休止期間を登録します。
-- `/schedule off-period list`
-  - **説明**: 登録済みの活動休止期間を一覧表示します。
-
-- `/schedule send_reminder`
-  - **説明**: テスト用に活動終了リマインダーを送信します。
-
-### `/config` - Botの基本設定
-
-- `/config show`: 現在のBot設定（顧問名、学生名、選択肢リストなど）を表示します。
-- `/config set advisor <名前>`: 顧問名を変更します。
-- `/config set student_rep <名前>`: 代表学生名を変更します。
-- `/config group add/remove <名前>`: グループの選択肢を編集します。
-- `/config location add/remove <名前>`: 場所の選択肢を編集します。
-  - **【重要】** 選択肢を変更した後は、`/admin restart` でBotを再起動すると、各コマンドの選択肢に反映されます。
-
-### `/admin` - 管理者用コマンド
-
-- `/admin reload`
-  - **説明**: Botの全機能を再読み込みします。コマンドの選択肢などを変更した後に、Botを停止させずに変更を反映させたい場合に使用します。
-- `/admin restart`
-  - **説明**: Botを安全に再起動します。
-  - **権限**: どちらのコマンドもサーバーの管理者のみ実行可能です。
+追加提案・移行判断・SharePoint 連携案は `docs/ROADMAP.md` に整理しています。
