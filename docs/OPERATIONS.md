@@ -45,6 +45,8 @@ REPORT_NOTICE_CHANNEL_ID=1234567890
   - `/admin reload` 実行
 - 報告導線をチャンネルに常設したい
   - `/report post_guide` を実行して、投稿メッセージをピン留め
+  - 報告 Modal は Discord の上限回避のため4項目（日付・時間・人数・内容）に絞っている
+  - グループ「その他」はグループ名を追加入力せず、内容欄へ補足する。場所「その他」の場合だけ場所入力を含む5項目の簡易報告 Modal が開く
 - プロセス不調
   - `/admin restart`（start script 必須）
 - データ不整合

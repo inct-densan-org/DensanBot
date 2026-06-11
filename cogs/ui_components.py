@@ -166,8 +166,6 @@ class PagedItemView(discord.ui.View):
 
 
 class ReportModal(ActivityBaseModal, title="活動報告"):
-    group = discord.ui.TextInput(label="グループ")
-    location = discord.ui.TextInput(label="活動場所")
     activity_date = discord.ui.TextInput(label="活動日 (YYYY-MM-DD or YYYYMMDD)", placeholder="例: 2026-05-28")
     activity_time = discord.ui.TextInput(label="活動時間 (開始 - 終了)", placeholder="例: 15:00-17:00 or 1500-1700")
     participants = discord.ui.TextInput(label="活動人数", placeholder="半角数字で入力してください")
@@ -176,7 +174,29 @@ class ReportModal(ActivityBaseModal, title="活動報告"):
     def __init__(self, cog, group: str, location: str, default_activity_time: str | None = None, default_activity_date: str | None = None):
         super().__init__()
         self.cog = cog
-        self.setup_common_defaults(self.group, self.location, group, location)
+        self.group = group
+        self.location = location
+        self.activity_date.default = default_activity_date or datetime.datetime.now().date().isoformat()
+        if default_activity_time:
+            self.activity_time.default = default_activity_time
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.cog.handle_report_submission(interaction, self)
+
+class ReportTargetModal(ActivityBaseModal, title="活動報告（場所も入力）"):
+    location = discord.ui.TextInput(label="活動場所", placeholder="例: PC教室")
+    activity_date = discord.ui.TextInput(label="活動日 (YYYY-MM-DD or YYYYMMDD)", placeholder="例: 2026-05-28")
+    activity_time = discord.ui.TextInput(label="活動時間 (開始 - 終了)", placeholder="例: 15:00-17:00 or 1500-1700")
+    participants = discord.ui.TextInput(label="活動人数", placeholder="半角数字で入力してください")
+    description = discord.ui.TextInput(label="活動内容・備考", style=discord.TextStyle.paragraph, required=False)
+
+    def __init__(self, cog, group: str, location: str, default_activity_time: str | None = None, default_activity_date: str | None = None):
+        super().__init__()
+        self.cog = cog
+        self.group = group
+        self.location.default = "" if location == "その他" else location
+        if location == "その他":
+            self.location.placeholder = "活動場所を入力してください"
         self.activity_date.default = default_activity_date or datetime.datetime.now().date().isoformat()
         if default_activity_time:
             self.activity_time.default = default_activity_time
@@ -212,6 +232,18 @@ class GroupSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         self.parent_view.selected_group = self.values[0]
+        defaults = get_todays_plan_defaults(self.parent_view.selected_group)
+        if self.parent_view.selected_group != "その他" and defaults.get("location"):
+            await interaction.response.send_modal(
+                ReportModal(
+                    cog=self.parent_view.cog,
+                    group=self.parent_view.selected_group,
+                    location=defaults["location"],
+                    default_activity_time=defaults.get("activity_time"),
+                    default_activity_date=defaults.get("activity_date"),
+                )
+            )
+            return
         await interaction.response.defer()
         await self.parent_view.update_view(interaction)
 
@@ -224,14 +256,15 @@ class LocationSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         selected_location = self.values[0]
         defaults = get_todays_plan_defaults(self.parent_view.selected_group)
-        modal = ReportModal(
+        modal_class = ReportTargetModal if selected_location == "その他" else ReportModal
+        modal = modal_class(
             cog=self.parent_view.cog,
             group=self.parent_view.selected_group,
             location=selected_location,
-            default_activity_time=defaults.get("activity_time")
+            default_activity_time=defaults.get("activity_time"),
+            default_activity_date=defaults.get("activity_date"),
         )
         await interaction.response.send_modal(modal)
-        await interaction.edit_original_response(content="📝 フォームを開きました。入力を続けてください。", embed=None, view=None)
 
 class ReminderView(discord.ui.View):
     def __init__(self, cog):

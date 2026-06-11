@@ -11,7 +11,7 @@ from .utils import (
     load_json, save_json, get_excel_filename_for_month, parse_time, parse_date,
     REPORT_LOG_FILE, ZEN_TO_HAN, get_group_options, get_location_options, JST, PLAN_LOG_FILE_NAME
 )
-from .ui_components import ReportModal, ReminderView, get_todays_plan_defaults
+from .ui_components import ReportModal, ReportTargetModal, ReminderView, get_todays_plan_defaults
 
 REPORT_NOTICE_CHANNEL_ID = int(os.getenv("REPORT_NOTICE_CHANNEL_ID", 0))
 
@@ -29,13 +29,15 @@ class ReportCog(commands.Cog):
     )
     async def open_modal(self, interaction: discord.Interaction, group: app_commands.Choice[str], location: app_commands.Choice[str]):
         defaults = get_todays_plan_defaults(group.value)
+        target_location = defaults.get("location") if location.value == "その他" and defaults.get("location") else location.value
+        modal_class = ReportTargetModal if target_location == "その他" else ReportModal
         await interaction.response.send_modal(
-            ReportModal(
-                cog=self, 
+            modal_class(
+                cog=self,
                 group=group.value,
-                location=location.value,
+                location=target_location,
                 default_activity_time=defaults.get("activity_time"),
-                default_activity_date=defaults.get("activity_date")
+                default_activity_date=defaults.get("activity_date"),
             )
         )
 
@@ -79,14 +81,15 @@ class ReportCog(commands.Cog):
             try: participants_num = int(modal.participants.value.translate(ZEN_TO_HAN))
             except (ValueError, TypeError): participants_num = 0
             
-            group_name = modal.group.value
-            location_name = modal.location.value
+            group_name = modal.group.value if hasattr(modal.group, "value") else modal.group
+            location_name = modal.location.value if hasattr(modal.location, "value") else modal.location
 
             report_log = load_json(REPORT_LOG_FILE)
             if report_date_str not in report_log: report_log[report_date_str] = {"groups": {}}
+            description_value = getattr(getattr(modal, "description", None), "value", "")
             report_log[report_date_str]["groups"][group_name] = {
-                "start_time": start_time, "end_time": end_time, "location": location_name, 
-                "participants": participants_num, "description": modal.description.value, "reporter": interaction.user.display_name,
+                "start_time": start_time, "end_time": end_time, "location": location_name,
+                "participants": participants_num, "description": description_value, "reporter": interaction.user.display_name,
             }
             save_json(REPORT_LOG_FILE, report_log)
             
@@ -117,7 +120,7 @@ class ReportCog(commands.Cog):
                 embed.add_field(name="活動時間", value=f"{start_time} - {end_time}", inline=False)
                 embed.add_field(name="活動場所", value=location_name, inline=True)
                 embed.add_field(name="活動人数", value=f"{participants_num}人", inline=True)
-                if modal.description.value: embed.add_field(name="活動内容・備考", value=modal.description.value, inline=False)
+                if description_value: embed.add_field(name="活動内容・備考", value=description_value, inline=False)
                 embed.set_footer(text=f"報告者: {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
                 await notice_channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none(), silent=True)
         except Exception as e:
